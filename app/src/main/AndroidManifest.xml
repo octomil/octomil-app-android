@@ -16,7 +16,7 @@
         android:label="Octomil"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+        android:theme="@style/Theme.Octomil"
         android:usesCleartextTraffic="true">
 
         <activity

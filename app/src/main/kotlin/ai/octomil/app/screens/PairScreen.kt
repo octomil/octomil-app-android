@@ -18,11 +18,11 @@ fun PairScreen(
     // Update server URL if host was provided via deep link
     LaunchedEffect(host) {
         if (!host.isNullOrBlank()) {
-            OctomilApplication.instance.saveCredentials(
-                apiKey = OctomilApplication.instance.client.apiKey,
-                orgId = OctomilApplication.instance.client.orgId,
-                serverUrl = host,
-            )
+            val app = OctomilApplication.instance
+            val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
+            val apiKey = prefs.getString("api_key", "") ?: ""
+            val orgId = prefs.getString("org_id", "") ?: ""
+            app.saveCredentials(apiKey, orgId, host)
         }
     }
 

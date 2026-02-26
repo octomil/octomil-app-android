@@ -83,7 +83,7 @@ class OctomilApplication : Application() {
             setPort(port)
             setAttribute("device_name", "${Build.MANUFACTURER} ${Build.MODEL}")
             setAttribute("platform", "android")
-            setAttribute("device_id", getDeviceId())
+            setAttribute("device_id", loadDeviceId())
         }
 
         nsdManager = (getSystemService(Context.NSD_SERVICE) as NsdManager).also { mgr ->
@@ -102,7 +102,7 @@ class OctomilApplication : Application() {
         }
     }
 
-    private fun getDeviceId(): String {
+    private fun loadDeviceId(): String {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
         var id = prefs.getString("device_id", null)
         if (id == null) {

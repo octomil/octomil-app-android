@@ -16,7 +16,7 @@ class PairViewModel : ViewModel() {
     fun startPairing(code: String) {
         viewModelScope.launch {
             val client = OctomilApplication.instance.client
-            client.pairingManager.pair(code).collect { session ->
+            client.pair(code).collect { session ->
                 _session.value = session
             }
         }

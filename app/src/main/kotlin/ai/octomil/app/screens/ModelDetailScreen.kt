@@ -13,6 +13,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelDetailScreen(
@@ -50,8 +58,8 @@ fun ModelDetailScreen(
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Model Info", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    DeviceInfoRow("ID", modelId)
-                    DeviceInfoRow("Status", if (viewModel.isModelLoaded) "Loaded" else "Not loaded")
+                    InfoRow("ID", modelId)
+                    InfoRow("Status", if (viewModel.isModelLoaded) "Loaded" else "Not loaded")
                 }
             }
 

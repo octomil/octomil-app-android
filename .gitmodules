@@ -1,0 +1,3 @@
+[submodule "octomil-android"]
+	path = octomil-android
+	url = https://github.com/octomil/octomil-android.git

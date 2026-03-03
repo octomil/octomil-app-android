@@ -19,7 +19,7 @@ include(":app")
 // Include SDK modules from sibling repo
 includeBuild("octomil-android") {
     dependencySubstitution {
-        substitute(module("ai.octomil:octomil-client")).using(project(":octomil-client"))
-        substitute(module("ai.octomil:octomil-ui")).using(project(":octomil-ui"))
+        substitute(module("ai.octomil:octomil-client")).using(project(":octomil"))
+        substitute(module("ai.octomil:octomil-ui")).using(project(":octomil"))
     }
 }

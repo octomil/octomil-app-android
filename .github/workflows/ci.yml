@@ -50,14 +50,14 @@ jobs:
 
       - name: Upload lint results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lint-results
           path: app/build/reports/lint-results-debug.html
           if-no-files-found: ignore
 
       - name: Upload debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -140,7 +140,7 @@ jobs:
 
       # --- Upload bundle artifact ---
       - name: Upload AAB artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-aab-${{ steps.version.outputs.version }}
           path: app/build/outputs/bundle/release/app-release.aab

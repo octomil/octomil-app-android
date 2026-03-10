@@ -4,7 +4,10 @@ import ai.octomil.app.OctomilApplication
 import ai.octomil.api.OctomilApiFactory
 import ai.octomil.config.OctomilConfig
 import ai.octomil.pairing.ui.PairingScreen
+import ai.octomil.pairing.ui.PairingState
 import ai.octomil.pairing.ui.PairingViewModel
+import ai.octomil.tryitout.TryItOutActivity
+import androidx.activity.ComponentActivity
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -55,7 +58,21 @@ fun PairScreen(
 
         PairingScreen(
             viewModel = viewModel,
-            onTryItOut = onComplete,
+            onTryItOut = {
+                val state = viewModel.state.value
+                if (state is PairingState.Success) {
+                    val intent = TryItOutActivity.createIntent(
+                        context = context,
+                        modelName = state.modelName,
+                        modelVersion = state.modelVersion,
+                        sizeBytes = state.sizeBytes,
+                        runtime = state.runtime,
+                        modality = state.modality,
+                    )
+                    (context as? ComponentActivity)?.startActivity(intent)
+                }
+                onComplete()
+            },
             onOpenDashboard = onComplete,
         )
     }

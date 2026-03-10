@@ -1,12 +1,10 @@
 package ai.octomil.app
 
 import android.app.Application
-import android.content.Context
-import android.net.nsd.NsdManager
-import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import ai.octomil.client.OctomilClient
 import ai.octomil.config.OctomilConfig
+import ai.octomil.discovery.DiscoveryManager
 import ai.octomil.app.services.LocalPairingServer
 import java.util.UUID
 
@@ -18,8 +16,7 @@ class OctomilApplication : Application() {
     var localServer: LocalPairingServer? = null
         private set
 
-    private var nsdManager: NsdManager? = null
-    private var registrationListener: NsdManager.RegistrationListener? = null
+    private var discoveryManager: DiscoveryManager? = null
 
     /** Callback invoked when a pairing code arrives via the local HTTP server. */
     var onPairingCodeReceived: ((code: String, host: String?, modelName: String?) -> Unit)? = null
@@ -76,36 +73,12 @@ class OctomilApplication : Application() {
         server.start()
         localServer = server
 
-        // Advertise via mDNS once server is ready
-        val port = server.port
-        if (port > 0) {
-            advertiseMdns(port)
-        }
-    }
-
-    private fun advertiseMdns(port: Int) {
-        val serviceInfo = NsdServiceInfo().apply {
-            serviceName = "${Build.MANUFACTURER} ${Build.MODEL}"
-            serviceType = "_octomil._tcp"
-            setPort(port)
-            setAttribute("device_name", "${Build.MANUFACTURER} ${Build.MODEL}")
-            setAttribute("platform", "android")
-            setAttribute("device_id", loadDeviceId())
-        }
-
-        nsdManager = (getSystemService(Context.NSD_SERVICE) as NsdManager).also { mgr ->
-            val listener = object : NsdManager.RegistrationListener {
-                override fun onServiceRegistered(info: NsdServiceInfo) {
-                    android.util.Log.d("Octomil", "mDNS registered: ${info.serviceName} on port $port")
-                }
-                override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                    android.util.Log.e("Octomil", "mDNS registration failed: $errorCode")
-                }
-                override fun onServiceUnregistered(info: NsdServiceInfo) {}
-                override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {}
-            }
-            registrationListener = listener
-            mgr.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+        // Advertise via mDNS using the SDK's DiscoveryManager
+        discoveryManager = DiscoveryManager(this).also {
+            it.startDiscoverable(
+                deviceId = loadDeviceId(),
+                deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
+            )
         }
     }
 
@@ -122,9 +95,7 @@ class OctomilApplication : Application() {
     override fun onTerminate() {
         super.onTerminate()
         localServer?.stop()
-        registrationListener?.let { listener ->
-            nsdManager?.unregisterService(listener)
-        }
+        discoveryManager?.stopDiscoverable()
     }
 
     companion object {

@@ -1,9 +1,12 @@
 package ai.octomil.app.screens
 
 import ai.octomil.app.OctomilApplication
-import ai.octomil.app.viewmodels.PairViewModel
-import ai.octomil.ui.PairingScreen
+import ai.octomil.api.OctomilApiFactory
+import ai.octomil.config.OctomilConfig
+import ai.octomil.pairing.ui.PairingScreen
+import ai.octomil.pairing.ui.PairingViewModel
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
@@ -11,9 +14,8 @@ fun PairScreen(
     initialCode: String? = null,
     host: String? = null,
     onComplete: () -> Unit,
-    viewModel: PairViewModel = viewModel(),
 ) {
-    val session by viewModel.session.collectAsState()
+    val context = LocalContext.current
 
     // Update server URL if host was provided via deep link
     LaunchedEffect(host) {
@@ -26,17 +28,35 @@ fun PairScreen(
         }
     }
 
-    // Auto-start pairing if code was provided
-    LaunchedEffect(initialCode) {
-        if (!initialCode.isNullOrBlank()) {
-            viewModel.startPairing(initialCode)
-        }
-    }
+    val code = initialCode ?: ""
+    val serverHost = host ?: "https://api.octomil.com/api/v1"
 
-    PairingScreen(
-        session = session,
-        onCodeScanned = { code -> viewModel.startPairing(code) },
-        onManualCode = { code -> viewModel.startPairing(code) },
-        onRetry = { viewModel.reset() },
-    )
+    if (code.isNotBlank()) {
+        val prefs = OctomilApplication.instance
+            .getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
+        val apiKey = prefs.getString("api_key", "") ?: ""
+        val orgId = prefs.getString("org_id", "") ?: ""
+
+        val config = OctomilConfig.Builder()
+            .deviceAccessToken(apiKey)
+            .orgId(orgId)
+            .serverUrl(serverHost)
+            .build()
+        val api = OctomilApiFactory.create(config)
+
+        val viewModel: PairingViewModel = viewModel(
+            factory = PairingViewModel.Factory(
+                api = api,
+                context = context,
+                token = code,
+                host = serverHost,
+            )
+        )
+
+        PairingScreen(
+            viewModel = viewModel,
+            onTryItOut = onComplete,
+            onOpenDashboard = onComplete,
+        )
+    }
 }

@@ -1,28 +1,31 @@
 package ai.octomil.app.viewmodels
 
-import ai.octomil.app.OctomilApplication
-import ai.octomil.client.pairing.PairingSession
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
+/**
+ * Lightweight state holder for pairing code entry in the app.
+ *
+ * The actual pairing flow is handled by the SDK's [ai.octomil.pairing.ui.PairingViewModel].
+ * This ViewModel only tracks whether a pairing code has been received (e.g., via deep link
+ * or local HTTP server) so the navigation layer can route to the SDK's PairingScreen.
+ */
 class PairViewModel : ViewModel() {
 
-    private val _session = MutableStateFlow<PairingSession?>(null)
-    val session: StateFlow<PairingSession?> = _session
+    private val _pairingCode = MutableStateFlow<String?>(null)
+    val pairingCode: StateFlow<String?> = _pairingCode
 
-    fun startPairing(code: String) {
-        viewModelScope.launch {
-            val client = OctomilApplication.instance.client
-            client.pair(code).collect { session ->
-                _session.value = session
-            }
-        }
+    private val _host = MutableStateFlow<String?>(null)
+    val host: StateFlow<String?> = _host
+
+    fun setPairingCode(code: String, host: String? = null) {
+        _pairingCode.value = code
+        _host.value = host
     }
 
     fun reset() {
-        _session.value = null
+        _pairingCode.value = null
+        _host.value = null
     }
 }

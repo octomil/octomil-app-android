@@ -1,6 +1,7 @@
 package ai.octomil.app.screens
 
 import ai.octomil.app.OctomilApplication
+import ai.octomil.client.OctomilClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,14 +106,14 @@ fun SettingsScreen() {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Authenticated")
                 Text(
-                    text = if (app.client.isAuthenticated) "Yes" else "No",
+                    text = if (OctomilClient.isInitialized()) "Yes" else "No",
                     fontWeight = FontWeight.Medium,
-                    color = if (app.client.isAuthenticated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    color = if (OctomilClient.isInitialized()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
             }
 
             Button(
-                onClick = { scope.launch { try { app.client.register() } catch (_: Exception) {} } },
+                onClick = { scope.launch { try { app.client.initialize() } catch (_: Exception) {} } },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             ) {
@@ -120,7 +121,7 @@ fun SettingsScreen() {
             }
 
             OutlinedButton(
-                onClick = { scope.launch { app.client.logout() } },
+                onClick = { scope.launch { app.client.close() } },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             ) {
@@ -134,8 +135,10 @@ fun SettingsScreen() {
 
             OutlinedButton(
                 onClick = {
-                    app.client.clearCache()
-                    showClearedSnackbar = true
+                    scope.launch {
+                        app.client.clearCache()
+                        showClearedSnackbar = true
+                    }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),

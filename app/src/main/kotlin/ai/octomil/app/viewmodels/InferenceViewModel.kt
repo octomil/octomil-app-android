@@ -29,16 +29,13 @@ class InferenceViewModel : ViewModel() {
 
             try {
                 val client = OctomilApplication.instance.client
-                val collector = client.createBenchmarkCollector()
-                collector.startSession()
 
                 val loadStart = System.nanoTime()
-                val model = client.downloadModel(modelId)
+                val model = client.updateModel()
                 val loadMs = (System.nanoTime() - loadStart) / 1_000_000.0
-                collector.recordModelLoadTime(loadMs)
 
+                model.getOrThrow()
                 isModelLoaded = true
-                val result = collector.finishSession()
                 _result.value = "Model loaded in ${String.format("%.1f", loadMs)}ms"
             } catch (e: Exception) {
                 _error.value = e.message ?: "Benchmark failed"

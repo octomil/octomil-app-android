@@ -6,6 +6,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import ai.octomil.client.OctomilClient
+import ai.octomil.config.OctomilConfig
 import ai.octomil.app.services.LocalPairingServer
 import java.util.UUID
 
@@ -32,12 +33,15 @@ class OctomilApplication : Application() {
         val orgId = prefs.getString("org_id", "") ?: ""
         val serverUrl = prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "https://api.octomil.com/api/v1"
 
-        client = OctomilClient(
-            apiKey = apiKey,
-            orgId = orgId,
-            baseUrl = serverUrl,
-            context = this,
-        )
+        client = OctomilClient.Builder(this)
+            .config(
+                OctomilConfig.Builder()
+                    .deviceAccessToken(apiKey)
+                    .orgId(orgId)
+                    .serverUrl(serverUrl)
+                    .build()
+            )
+            .build()
 
         startLocalServer()
     }
@@ -54,12 +58,15 @@ class OctomilApplication : Application() {
         }
 
         val url = serverUrl ?: prefs.getString("server_url", "https://api.octomil.com/api/v1")!!
-        client = OctomilClient(
-            apiKey = apiKey,
-            orgId = orgId,
-            baseUrl = url,
-            context = this,
-        )
+        client = OctomilClient.Builder(this)
+            .config(
+                OctomilConfig.Builder()
+                    .deviceAccessToken(apiKey)
+                    .orgId(orgId)
+                    .serverUrl(url)
+                    .build()
+            )
+            .build()
     }
 
     private fun startLocalServer() {

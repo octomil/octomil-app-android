@@ -21,9 +21,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import ai.octomil.app.screens.HomeScreen
+import ai.octomil.app.screens.ModelDetailScreen
 import ai.octomil.app.screens.PairScreen
 import ai.octomil.app.screens.SettingsScreen
-import ai.octomil.tryitout.TryItOutActivity
 
 class MainActivity : ComponentActivity() {
 
@@ -95,9 +95,6 @@ class MainActivity : ComponentActivity() {
                                 onModelClick = { modelId ->
                                     navController.navigate("${Routes.MODEL_DETAIL}/$modelId")
                                 },
-                                onPairClick = {
-                                    navController.navigate(Routes.PAIR)
-                                },
                             )
                         }
 
@@ -139,16 +136,10 @@ class MainActivity : ComponentActivity() {
                             ),
                         ) { backStackEntry ->
                             val modelId = backStackEntry.arguments?.getString("modelId") ?: ""
-                            LaunchedEffect(modelId) {
-                                val intent = TryItOutActivity.createIntent(
-                                    context = this@MainActivity,
-                                    modelName = modelId,
-                                    modelVersion = "",
-                                    sizeBytes = 0L,
-                                    runtime = "",
-                                )
-                                startActivity(intent)
-                                navController.popBackStack()
+                            val model = OctomilApplication.instance.pairedModels
+                                .firstOrNull { it.name == modelId }
+                            if (model != null) {
+                                ModelDetailScreen(model = model)
                             }
                         }
 

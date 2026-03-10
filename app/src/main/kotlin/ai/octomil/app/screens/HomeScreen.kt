@@ -5,10 +5,10 @@ import ai.octomil.client.OctomilClient
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,15 +16,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
     onModelClick: (modelId: String) -> Unit,
-    onPairClick: () -> Unit,
 ) {
     val app = OctomilApplication.instance
-    val isAuthenticated = OctomilClient.isInitialized()
+    val isInitialized = OctomilClient.isInitialized()
     val localPort = app.localServer?.port ?: 0
+    val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
+    val apiKey = prefs.getString("api_key", "") ?: ""
+    val deviceName = prefs.getString("device_name", "") ?: ""
+
+    val scope = rememberCoroutineScope()
+    var isRegistering by remember { mutableStateOf(false) }
+    var isRegistered by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = Modifier
@@ -40,7 +48,7 @@ fun HomeScreen(
             )
         }
 
-        // Status card
+        // Device section
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -51,42 +59,184 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Device Status",
+                        text = "Device",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    DeviceRow("Model", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                    DeviceRow("CPU", System.getProperty("os.arch") ?: "unknown")
+                    DeviceRow("OS", "Android ${android.os.Build.VERSION.RELEASE}")
+                    DeviceRow("RAM", "${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
+                }
+            }
+        }
+
+        // Status section
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Status",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        val statusColor = if (isAuthenticated) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.error
+                    if (isRegistered) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Text(
+                                text = "Registered",
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
-                        Surface(
-                            modifier = Modifier.size(8.dp),
-                            shape = RoundedCornerShape(4.dp),
-                            color = statusColor,
-                        ) {}
+                    } else if (isInitialized) {
+                        Button(
+                            onClick = {
+                                isRegistering = true
+                                errorMessage = null
+                                scope.launch {
+                                    try {
+                                        app.client.initialize()
+                                        isRegistered = true
+                                    } catch (e: Exception) {
+                                        errorMessage = e.message
+                                    }
+                                    isRegistering = false
+                                }
+                            },
+                            enabled = !isRegistering,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            if (isRegistering) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                    )
+                                    Text("Registering...")
+                                }
+                            } else {
+                                Text("Register Device")
+                            }
+                        }
+                    } else {
                         Text(
-                            text = if (isAuthenticated) "Registered" else "Not registered",
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = "Set device token in Settings to get started.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
 
-                    Text(
-                        text = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "Android ${android.os.Build.VERSION.RELEASE}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (errorMessage != null) {
+                        Text(
+                            text = errorMessage!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
 
+        // Paired Models section
+        item {
+            Text(
+                text = "Paired Models",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        if (app.pairedModels.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = "No models deployed yet",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Deploy a model with:\noctomil deploy <model> --phone",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        } else {
+            items(app.pairedModels, key = { it.name }) { model ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onModelClick(model.name) },
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                    ) {
+                        Text(
+                            text = model.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "v${model.version} \u00B7 ${model.runtime}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        // Network section
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Network",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    DeviceRow("Device Name", deviceName)
                     if (localPort > 0) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -99,7 +249,7 @@ fun HomeScreen(
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                             Text(
-                                text = "Discoverable on local network",
+                                text = "Port $localPort",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                             )
@@ -108,99 +258,13 @@ fun HomeScreen(
                 }
             }
         }
+    }
+}
 
-        // Quick actions
-        item {
-            Text(
-                text = "Quick Actions",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                ElevatedCard(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { onPairClick() },
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = null,
-                            modifier = Modifier.size(32.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                        Text("Pair Device", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-
-                ElevatedCard(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Memory,
-                            contentDescription = null,
-                            modifier = Modifier.size(32.dp),
-                            tint = MaterialTheme.colorScheme.secondary,
-                        )
-                        Text("Run Benchmark", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
-        }
-
-        // Models
-        item {
-            Text(
-                text = "Downloaded Models",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        text = "No models deployed yet",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Deploy a model with:\noctomil deploy <model> --phone",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+@Composable
+private fun DeviceRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
     }
 }

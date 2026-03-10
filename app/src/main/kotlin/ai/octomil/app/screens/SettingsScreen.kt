@@ -1,7 +1,6 @@
 package ai.octomil.app.screens
 
 import ai.octomil.app.OctomilApplication
-import ai.octomil.client.OctomilClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,27 +16,57 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen() {
     val app = OctomilApplication.instance
+    val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
 
-    var apiKey by remember { mutableStateOf("") }
-    var orgId by remember { mutableStateOf("") }
-    var serverUrl by remember { mutableStateOf("") }
+    var deviceToken by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
+    var orgId by remember { mutableStateOf(prefs.getString("org_id", "") ?: "") }
+    var serverUrl by remember { mutableStateOf(prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "") }
+    var deviceName by remember { mutableStateOf(prefs.getString("device_name", "") ?: "") }
 
     val snackbarHostState = remember { SnackbarHostState() }
-    var showSavedSnackbar by remember { mutableStateOf(false) }
-    var showClearedSnackbar by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var showClearCacheDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(showSavedSnackbar) {
-        if (showSavedSnackbar) {
-            snackbarHostState.showSnackbar("Credentials saved")
-            showSavedSnackbar = false
+    LaunchedEffect(statusMessage) {
+        if (statusMessage != null) {
+            snackbarHostState.showSnackbar(statusMessage!!)
+            statusMessage = null
         }
     }
-    LaunchedEffect(showClearedSnackbar) {
-        if (showClearedSnackbar) {
-            snackbarHostState.showSnackbar("Cache cleared")
-            showClearedSnackbar = false
-        }
+
+    if (showClearCacheDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearCacheDialog = false },
+            title = { Text("Clear Cache?") },
+            text = { Text("This will remove all downloaded models.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearCacheDialog = false
+                        scope.launch {
+                            try {
+                                app.client.clearCache()
+                                app.clearPairedModels()
+                                statusMessage = "Cache cleared"
+                            } catch (e: Exception) {
+                                statusMessage = "Failed: ${e.message}"
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("Clear")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCacheDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     Scaffold(
@@ -56,10 +85,9 @@ fun SettingsScreen() {
             Text("API Configuration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
             OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = { Text("API Key") },
-                placeholder = { Text("edg_...") },
+                value = deviceToken,
+                onValueChange = { deviceToken = it },
+                label = { Text("Device Token") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -86,16 +114,16 @@ fun SettingsScreen() {
 
             Button(
                 onClick = {
-                    if (apiKey.isNotBlank() && orgId.isNotBlank()) {
-                        app.saveCredentials(apiKey, orgId, serverUrl.ifBlank { null })
-                        showSavedSnackbar = true
+                    if (deviceToken.isNotBlank() && orgId.isNotBlank()) {
+                        app.saveCredentials(deviceToken, orgId, serverUrl.ifBlank { null })
+                        statusMessage = "Client reconfigured"
                     }
                 },
-                enabled = apiKey.isNotBlank() && orgId.isNotBlank(),
+                enabled = deviceToken.isNotBlank() && orgId.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             ) {
-                Text("Save Credentials")
+                Text("Save & Reconnect")
             }
 
             HorizontalDivider()
@@ -103,30 +131,17 @@ fun SettingsScreen() {
             // Device
             Text("Device", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Authenticated")
-                Text(
-                    text = if (OctomilClient.isInitialized()) "Yes" else "No",
-                    fontWeight = FontWeight.Medium,
-                    color = if (OctomilClient.isInitialized()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                )
-            }
-
-            Button(
-                onClick = { scope.launch { try { app.client.initialize() } catch (_: Exception) {} } },
+            OutlinedTextField(
+                value = deviceName,
+                onValueChange = {
+                    deviceName = it
+                    prefs.edit().putString("device_name", it).apply()
+                },
+                label = { Text("Device Name") },
+                singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-            ) {
-                Text("Register Device")
-            }
-
-            OutlinedButton(
-                onClick = { scope.launch { app.client.close() } },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Text("Logout")
-            }
+            )
 
             HorizontalDivider()
 
@@ -134,14 +149,12 @@ fun SettingsScreen() {
             Text("Cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
             OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        app.client.clearCache()
-                        showClearedSnackbar = true
-                    }
-                },
+                onClick = { showClearCacheDialog = true },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
             ) {
                 Text("Clear Model Cache")
             }
@@ -157,16 +170,9 @@ fun SettingsScreen() {
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DeviceInfoRow("Manufacturer", android.os.Build.MANUFACTURER)
-                    DeviceInfoRow("Model", android.os.Build.MODEL)
-                    DeviceInfoRow("Android", android.os.Build.VERSION.RELEASE)
-                    DeviceInfoRow("SDK", android.os.Build.VERSION.SDK_INT.toString())
-                    DeviceInfoRow("Architecture", System.getProperty("os.arch") ?: "unknown")
-                    DeviceInfoRow("SOC", android.os.Build.SOC_MODEL)
-                    val localPort = app.localServer?.port ?: 0
-                    if (localPort > 0) {
-                        DeviceInfoRow("Local Server", "Port $localPort")
-                    }
+                    DeviceInfoRow("Chip", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                    DeviceInfoRow("RAM", "${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
+                    DeviceInfoRow("OS", "Android ${android.os.Build.VERSION.RELEASE}")
                 }
             }
 
@@ -181,7 +187,6 @@ fun SettingsScreen() {
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DeviceInfoRow("App Version", "1.0.0")
-                    DeviceInfoRow("SDK Version", "1.0.0")
                     DeviceInfoRow("Platform", "Android")
                 }
             }

@@ -5,7 +5,9 @@ import android.os.Build
 import ai.octomil.client.OctomilClient
 import ai.octomil.config.OctomilConfig
 import ai.octomil.discovery.DiscoveryManager
+import ai.octomil.app.models.PairedModel
 import ai.octomil.app.services.LocalPairingServer
+import androidx.compose.runtime.mutableStateListOf
 import java.util.UUID
 
 class OctomilApplication : Application() {
@@ -17,6 +19,8 @@ class OctomilApplication : Application() {
         private set
 
     private var discoveryManager: DiscoveryManager? = null
+
+    val pairedModels = mutableStateListOf<PairedModel>()
 
     /** Callback invoked when a pairing code arrives via the local HTTP server. */
     var onPairingCodeReceived: ((code: String, host: String?, modelName: String?) -> Unit)? = null
@@ -30,6 +34,11 @@ class OctomilApplication : Application() {
         val orgId = prefs.getString("org_id", "") ?: ""
         val serverUrl = prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "https://api.octomil.com/api/v1"
 
+        // Initialize device name if not set
+        if (prefs.getString("device_name", null) == null) {
+            prefs.edit().putString("device_name", "${Build.MANUFACTURER} ${Build.MODEL}").apply()
+        }
+
         client = OctomilClient.Builder(this)
             .config(
                 OctomilConfig.Builder()
@@ -41,6 +50,16 @@ class OctomilApplication : Application() {
             .build()
 
         startLocalServer()
+    }
+
+    fun addPairedModel(model: PairedModel) {
+        if (pairedModels.none { it.name == model.name }) {
+            pairedModels.add(model)
+        }
+    }
+
+    fun clearPairedModels() {
+        pairedModels.clear()
     }
 
     fun saveCredentials(apiKey: String, orgId: String, serverUrl: String? = null) {

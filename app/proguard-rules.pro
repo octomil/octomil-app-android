@@ -8,3 +8,6 @@
 # TensorFlow Lite
 -keep class org.tensorflow.lite.** { *; }
 -dontwarn org.tensorflow.lite.**
+
+# Google Tink (crypto) — suppress missing errorprone annotations
+-dontwarn com.google.errorprone.annotations.**

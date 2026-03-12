@@ -12,7 +12,7 @@ import java.util.UUID
 
 class OctomilApplication : Application() {
 
-    lateinit var client: OctomilClient
+    var client: OctomilClient? = null
         private set
 
     var localServer: LocalPairingServer? = null
@@ -39,15 +39,20 @@ class OctomilApplication : Application() {
             prefs.edit().putString("device_name", "${Build.MANUFACTURER} ${Build.MODEL}").apply()
         }
 
-        client = OctomilClient.Builder(this)
-            .config(
-                OctomilConfig.Builder()
-                    .deviceAccessToken(apiKey)
-                    .orgId(orgId)
-                    .serverUrl(serverUrl)
-                    .build()
-            )
-            .build()
+        // Only initialize the client if credentials are configured.
+        // On first launch, api_key is empty — the client is created later
+        // when the user pairs via saveCredentials().
+        if (apiKey.isNotBlank()) {
+            client = OctomilClient.Builder(this)
+                .config(
+                    OctomilConfig.Builder()
+                        .deviceAccessToken(apiKey)
+                        .orgId(orgId)
+                        .serverUrl(serverUrl)
+                        .build()
+                )
+                .build()
+        }
 
         startLocalServer()
     }

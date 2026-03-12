@@ -46,7 +46,7 @@ fun SettingsScreen() {
                         showClearCacheDialog = false
                         scope.launch {
                             try {
-                                app.client.clearCache()
+                                app.client?.clearCache()
                                 app.clearPairedModels()
                                 statusMessage = "Cache cleared"
                             } catch (e: Exception) {

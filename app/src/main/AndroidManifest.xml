@@ -53,10 +53,5 @@
                 <data android:scheme="https" android:host="octomil.com" android:pathPrefix="/pair" />
             </intent-filter>
         </activity>
-
-        <!-- Local pairing server runs as a foreground service -->
-        <service
-            android:name=".services.LocalPairingService"
-            android:exported="false" />
     </application>
 </manifest>

@@ -110,7 +110,7 @@ fun HomeScreen(
                                 errorMessage = null
                                 scope.launch {
                                     try {
-                                        app.client.initialize()
+                                        app.client?.initialize() ?: throw IllegalStateException("Not configured — pair your device first")
                                         isRegistered = true
                                     } catch (e: Exception) {
                                         errorMessage = e.message

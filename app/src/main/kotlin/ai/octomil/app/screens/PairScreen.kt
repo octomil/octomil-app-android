@@ -4,7 +4,7 @@ import ai.octomil.app.OctomilApplication
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.models.formatBytes
 import ai.octomil.api.OctomilApiFactory
-import ai.octomil.client.OctomilClient
+import ai.octomil.config.AuthConfig
 import ai.octomil.config.OctomilConfig
 import ai.octomil.pairing.ui.PairingScreen
 import ai.octomil.pairing.ui.PairingState
@@ -14,7 +14,6 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,13 +32,18 @@ fun PairScreen(
     val context = LocalContext.current
     val app = OctomilApplication.instance
 
-    // Update server URL if host was provided via deep link
+    // Persist server URL if host was provided via deep link (only when creds exist)
     LaunchedEffect(host) {
         if (!host.isNullOrBlank()) {
             val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
             val apiKey = prefs.getString("api_key", "") ?: ""
             val orgId = prefs.getString("org_id", "") ?: ""
-            app.saveCredentials(apiKey, orgId, host)
+            if (apiKey.isNotBlank() && orgId.isNotBlank()) {
+                app.saveCredentials(apiKey, orgId, host)
+            } else {
+                // Just save the server URL for later — don't try to init client without creds
+                prefs.edit().putString("server_url", host).apply()
+            }
         }
     }
 
@@ -47,14 +51,16 @@ fun PairScreen(
     val serverHost = host ?: "https://api.octomil.com/api/v1"
 
     if (code.isNotBlank()) {
-        val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
-        val apiKey = prefs.getString("api_key", "") ?: ""
-        val orgId = prefs.getString("org_id", "") ?: ""
-
+        // Pairing endpoints authenticate via the code in the URL path, not via
+        // bearer token. Use the pairing code as a placeholder token so the
+        // OctomilConfig validation passes even on first launch (no stored creds).
         val config = OctomilConfig.Builder()
-            .deviceAccessToken(apiKey)
-            .orgId(orgId)
-            .serverUrl(serverHost)
+            .auth(AuthConfig.OrgApiKey(
+                apiKey = code,
+                orgId = "pairing",
+                serverUrl = serverHost,
+            ))
+            .modelId("pairing")
             .build()
         val api = OctomilApiFactory.create(config)
 
@@ -98,8 +104,8 @@ fun PairScreen(
             },
             onOpenDashboard = onComplete,
         )
-    } else if (OctomilClient.isInitialized()) {
-        // Ready to pair — matching iOS empty state
+    } else {
+        // No pairing code — show scan prompt
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
@@ -122,36 +128,6 @@ fun PairScreen(
                 )
                 Text(
                     text = "Scan a QR code or run\noctomil deploy <model> --phone\nto pair.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    } else {
-        // Not configured — matching iOS empty state
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.padding(32.dp),
-            ) {
-                Icon(
-                    Icons.Default.Settings,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "Not Configured",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                )
-                Text(
-                    text = "Set your device token in Settings before pairing.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

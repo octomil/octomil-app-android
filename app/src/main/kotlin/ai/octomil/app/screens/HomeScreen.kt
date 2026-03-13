@@ -2,6 +2,8 @@ package ai.octomil.app.screens
 
 import ai.octomil.app.OctomilApplication
 import ai.octomil.client.OctomilClient
+import ai.octomil.errors.OctomilErrorCode
+import ai.octomil.errors.OctomilException
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -110,7 +112,7 @@ fun HomeScreen(
                                 errorMessage = null
                                 scope.launch {
                                     try {
-                                        app.client?.initialize() ?: throw IllegalStateException("Not configured — pair your device first")
+                                        app.client?.initialize() ?: throw OctomilException(OctomilErrorCode.DEVICE_NOT_REGISTERED, "Not configured — pair your device first")
                                         isRegistered = true
                                     } catch (e: Exception) {
                                         errorMessage = e.message

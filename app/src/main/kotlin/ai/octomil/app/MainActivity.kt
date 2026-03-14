@@ -104,6 +104,8 @@ class MainActivity : ComponentActivity() {
                                 navDeepLink { uriPattern = "octomil://pair?code={code}" },
                                 navDeepLink { uriPattern = "octomil://pair?token={token}&host={host}" },
                                 navDeepLink { uriPattern = "https://app.octomil.com/pair?code={code}" },
+                                navDeepLink { uriPattern = "https://octomil.com/pair?token={token}" },
+                                navDeepLink { uriPattern = "https://octomil.com/pair?token={token}&host={host}" },
                             ),
                             arguments = listOf(
                                 navArgument("code") { type = NavType.StringType; defaultValue = ""; nullable = true },

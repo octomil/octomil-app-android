@@ -254,7 +254,7 @@ private fun DeviceInfoRow(label: String, value: String) {
 private suspend fun fetchOrgId(apiKey: String, serverUrl: String): String? {
     return withContext(Dispatchers.IO) {
         try {
-            val url = URL("$serverUrl/me")
+            val url = URL("$serverUrl/auth/me")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("Authorization", "Bearer $apiKey")

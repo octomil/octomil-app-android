@@ -224,10 +224,12 @@ private fun processImage(
 /**
  * Parse a pairing URL and extract (code, host?) pair.
  *
- * Supported formats:
+ * Supported formats (path-based preferred, query-based legacy):
+ * - octomil://pair/CODE
+ * - https://octomil.com/pair/CODE
+ * - https://app.octomil.com/pair/CODE?host=...
  * - octomil://pair?code=X or octomil://pair?token=X&host=Y
  * - https://octomil.com/pair?token=X&host=Y
- * - https://app.octomil.com/pair?code=X
  */
 private fun parsePairingUrl(url: String): Pair<String, String?>? {
     val uri = try {
@@ -244,7 +246,19 @@ private fun parsePairingUrl(url: String): Pair<String, String?>? {
 
     if (!isOctomilScheme && !isHttpsPairing) return null
 
-    val code = uri.getQueryParameter("code")
+    // Try path-based format first: /pair/CODE
+    val pathSegments = uri.pathSegments
+    val pathCode = if (isOctomilScheme) {
+        // octomil://pair/CODE → pathSegments = ["CODE"]
+        pathSegments.firstOrNull()
+    } else {
+        // https://octomil.com/pair/CODE → pathSegments = ["pair", "CODE"]
+        if (pathSegments.size >= 2 && pathSegments[0] == "pair") pathSegments[1] else null
+    }
+
+    // Fall back to query params: ?code=X or ?token=X
+    val code = pathCode?.takeIf { it.isNotBlank() }
+        ?: uri.getQueryParameter("code")
         ?: uri.getQueryParameter("token")
         ?: return null
 

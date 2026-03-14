@@ -130,6 +130,10 @@ fun PairScreen(
         )
     } else {
         // No pairing code — show scan prompt with camera button
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
@@ -169,6 +173,7 @@ fun PairScreen(
                     Text("Scan QR Code")
                 }
             }
+        }
         }
     }
 }

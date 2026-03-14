@@ -13,6 +13,7 @@ import ai.octomil.tryitout.TryItOutActivity
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -47,18 +48,41 @@ fun PairScreen(
         }
     }
 
-    val code = initialCode ?: ""
-    val serverHost = host ?: "https://api.octomil.com/api/v1"
+    // Track code/host — can be updated by QR scanner
+    var activeCode by remember { mutableStateOf(initialCode ?: "") }
+    var activeHost by remember { mutableStateOf(host ?: "https://api.octomil.com/api/v1") }
+    var showScanner by remember { mutableStateOf(false) }
 
-    if (code.isNotBlank()) {
+    // Update if deep link params change
+    LaunchedEffect(initialCode, host) {
+        if (!initialCode.isNullOrBlank()) {
+            activeCode = initialCode
+        }
+        if (!host.isNullOrBlank()) {
+            activeHost = host
+        }
+    }
+
+    if (showScanner) {
+        QrScannerScreen(
+            onCodeScanned = { code, scannedHost ->
+                activeCode = code
+                if (!scannedHost.isNullOrBlank()) {
+                    activeHost = scannedHost
+                }
+                showScanner = false
+            },
+            onDismiss = { showScanner = false },
+        )
+    } else if (activeCode.isNotBlank()) {
         // Pairing endpoints authenticate via the code in the URL path, not via
         // bearer token. Use the pairing code as a placeholder token so the
         // OctomilConfig validation passes even on first launch (no stored creds).
         val config = OctomilConfig.Builder()
             .auth(AuthConfig.OrgApiKey(
-                apiKey = code,
+                apiKey = activeCode,
                 orgId = "pairing",
-                serverUrl = serverHost,
+                serverUrl = activeHost,
             ))
             .modelId("pairing")
             .build()
@@ -68,8 +92,8 @@ fun PairScreen(
             factory = PairingViewModel.Factory(
                 api = api,
                 context = context,
-                token = code,
-                host = serverHost,
+                token = activeCode,
+                host = activeHost,
             )
         )
 
@@ -105,7 +129,7 @@ fun PairScreen(
             onOpenDashboard = onComplete,
         )
     } else {
-        // No pairing code — show scan prompt
+        // No pairing code — show scan prompt with camera button
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
@@ -127,11 +151,23 @@ fun PairScreen(
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 )
                 Text(
-                    text = "Scan a QR code or run\noctomil deploy <model> --phone\nto pair.",
+                    text = "Scan the QR code from the CLI\nor run octomil deploy <model> --phone",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { showScanner = true },
+                ) {
+                    Icon(
+                        Icons.Default.CameraAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Scan QR Code")
+                }
             }
         }
     }

@@ -10,7 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -112,18 +116,48 @@ fun SettingsScreen() {
                 shape = RoundedCornerShape(12.dp),
             )
 
+            var isSaving by remember { mutableStateOf(false) }
+
             Button(
                 onClick = {
-                    if (deviceToken.isNotBlank() && orgId.isNotBlank()) {
-                        app.saveCredentials(deviceToken, orgId, serverUrl.ifBlank { null })
-                        statusMessage = "Client reconfigured"
+                    if (deviceToken.isNotBlank()) {
+                        if (orgId.isNotBlank()) {
+                            app.saveCredentials(deviceToken, orgId, serverUrl.ifBlank { null })
+                            statusMessage = "Client reconfigured"
+                        } else {
+                            // Auto-fetch org ID from server using the API key
+                            isSaving = true
+                            scope.launch {
+                                val fetchedOrgId = fetchOrgId(
+                                    apiKey = deviceToken,
+                                    serverUrl = serverUrl.ifBlank { "https://api.octomil.com/api/v1" },
+                                )
+                                isSaving = false
+                                if (fetchedOrgId != null) {
+                                    orgId = fetchedOrgId
+                                    app.saveCredentials(deviceToken, fetchedOrgId, serverUrl.ifBlank { null })
+                                    statusMessage = "Connected (org: $fetchedOrgId)"
+                                } else {
+                                    statusMessage = "Could not fetch org ID — enter it manually"
+                                }
+                            }
+                        }
                     }
                 },
-                enabled = deviceToken.isNotBlank() && orgId.isNotBlank(),
+                enabled = deviceToken.isNotBlank() && !isSaving,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             ) {
-                Text("Save & Reconnect")
+                if (isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Connecting...")
+                } else {
+                    Text("Save & Reconnect")
+                }
             }
 
             HorizontalDivider()
@@ -201,5 +235,33 @@ private fun DeviceInfoRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+    }
+}
+
+/**
+ * Fetch org_id from the server using the API key.
+ * Calls GET /api/v1/me which returns the authenticated user's org.
+ */
+private suspend fun fetchOrgId(apiKey: String, serverUrl: String): String? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$serverUrl/me")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("Authorization", "Bearer $apiKey")
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 10_000
+
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().readText()
+                // Parse org_id from JSON response
+                val orgIdMatch = Regex(""""org_id"\s*:\s*"([^"]+)"""").find(body)
+                orgIdMatch?.groupValues?.get(1)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 }

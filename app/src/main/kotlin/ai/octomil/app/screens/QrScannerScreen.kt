@@ -75,27 +75,27 @@ fun QrScannerScreen(
                     val executor = Executors.newSingleThreadExecutor()
 
                     cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
+                        try {
+                            val cameraProvider = cameraProviderFuture.get()
+                            val preview = Preview.Builder().build().also {
+                                it.surfaceProvider = previewView.surfaceProvider
+                            }
 
-                        val scanner = BarcodeScanning.getClient()
-                        val analysis = ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-                            .also { imageAnalysis ->
-                                imageAnalysis.setAnalyzer(executor) { imageProxy ->
-                                    processImage(imageProxy, scanner) { code, host ->
-                                        if (!scanned) {
-                                            scanned = true
-                                            onCodeScanned(code, host)
+                            val scanner = BarcodeScanning.getClient()
+                            val analysis = ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+                                .also { imageAnalysis ->
+                                    imageAnalysis.setAnalyzer(executor) { imageProxy ->
+                                        processImage(imageProxy, scanner) { code, host ->
+                                            if (!scanned) {
+                                                scanned = true
+                                                onCodeScanned(code, host)
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                        try {
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
                                 lifecycleOwner,
@@ -104,7 +104,7 @@ fun QrScannerScreen(
                                 analysis,
                             )
                         } catch (e: Exception) {
-                            Log.e("QrScanner", "Camera bind failed", e)
+                            Log.e("QrScanner", "Camera init failed", e)
                         }
                     }, ContextCompat.getMainExecutor(ctx))
 

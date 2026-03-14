@@ -245,9 +245,12 @@ private fun processImage(
     scanner.process(inputImage)
         .addOnSuccessListener { barcodes ->
             for (barcode in barcodes) {
+                Log.d("QrScanner", "Barcode: type=${barcode.valueType} raw='${barcode.rawValue}'")
                 if (barcode.valueType != Barcode.TYPE_URL && barcode.valueType != Barcode.TYPE_TEXT) continue
                 val url = barcode.rawValue ?: continue
-                val parsed = parsePairingUrl(url) ?: continue
+                val parsed = parsePairingUrl(url)
+                Log.d("QrScanner", "Parsed: ${parsed?.first} host=${parsed?.second}")
+                if (parsed == null) continue
                 onResult(parsed.first, parsed.second)
                 break
             }

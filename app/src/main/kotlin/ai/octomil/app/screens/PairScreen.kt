@@ -1,5 +1,6 @@
 package ai.octomil.app.screens
 
+import android.util.Log
 import ai.octomil.app.OctomilApplication
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.models.formatBytes
@@ -63,9 +64,12 @@ fun PairScreen(
         }
     }
 
+    Log.d("PairScreen", "State: activeCode='$activeCode' activeHost='$activeHost' showScanner=$showScanner initialCode=$initialCode host=$host")
+
     if (showScanner) {
         QrScannerScreen(
             onCodeScanned = { code, scannedHost ->
+                Log.d("PairScreen", "QR scanned: code='$code' host=$scannedHost")
                 activeCode = code
                 if (!scannedHost.isNullOrBlank()) {
                     activeHost = scannedHost
@@ -78,56 +82,81 @@ fun PairScreen(
         // Pairing endpoints authenticate via the code in the URL path, not via
         // bearer token. Use the pairing code as a placeholder token so the
         // OctomilConfig validation passes even on first launch (no stored creds).
-        val config = OctomilConfig.Builder()
-            .auth(AuthConfig.OrgApiKey(
-                apiKey = activeCode,
-                orgId = "pairing",
-                serverUrl = activeHost,
-            ))
-            .modelId("pairing")
-            .build()
-        val api = OctomilApiFactory.create(config)
+        Log.d("PairScreen", "Creating OctomilConfig for pairing: code='$activeCode' host='$activeHost'")
+        val config = try {
+            OctomilConfig.Builder()
+                .auth(AuthConfig.OrgApiKey(
+                    apiKey = activeCode,
+                    orgId = "pairing",
+                    serverUrl = activeHost,
+                ))
+                .modelId("pairing")
+                .build()
+        } catch (e: Exception) {
+            Log.e("PairScreen", "OctomilConfig.build() failed", e)
+            null
+        }
+        val api = if (config != null) OctomilApiFactory.create(config) else null
 
-        val viewModel: PairingViewModel = viewModel(
-            factory = PairingViewModel.Factory(
-                api = api,
-                context = context,
-                token = activeCode,
-                host = activeHost,
+        if (api == null) {
+            // Config failed — show error instead of crashing
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(32.dp),
+                ) {
+                    Text("Failed to initialize pairing", style = MaterialTheme.typography.titleMedium)
+                    Text("Code: $activeCode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(onClick = { activeCode = "" }) { Text("Try Again") }
+                }
+            }
+        } else {
+            val viewModel: PairingViewModel = viewModel(
+                factory = PairingViewModel.Factory(
+                    api = api,
+                    context = context,
+                    token = activeCode,
+                    host = activeHost,
+                )
             )
-        )
 
-        PairingScreen(
-            viewModel = viewModel,
-            onTryItOut = {
-                val state = viewModel.state.value
-                if (state is PairingState.Success) {
-                    // Store the paired model
-                    app.addPairedModel(
-                        PairedModel(
-                            name = state.modelName,
-                            version = state.modelVersion,
+            PairingScreen(
+                viewModel = viewModel,
+                onTryItOut = {
+                    val state = viewModel.state.value
+                    if (state is PairingState.Success) {
+                        // Store the paired model
+                        app.addPairedModel(
+                            PairedModel(
+                                name = state.modelName,
+                                version = state.modelVersion,
+                                sizeBytes = state.sizeBytes,
+                                sizeString = formatBytes(state.sizeBytes),
+                                runtime = state.runtime,
+                                modality = state.modality,
+                            )
+                        )
+
+                        val intent = TryItOutActivity.createIntent(
+                            context = context,
+                            modelName = state.modelName,
+                            modelVersion = state.modelVersion,
                             sizeBytes = state.sizeBytes,
-                            sizeString = formatBytes(state.sizeBytes),
                             runtime = state.runtime,
                             modality = state.modality,
                         )
-                    )
-
-                    val intent = TryItOutActivity.createIntent(
-                        context = context,
-                        modelName = state.modelName,
-                        modelVersion = state.modelVersion,
-                        sizeBytes = state.sizeBytes,
-                        runtime = state.runtime,
-                        modality = state.modality,
-                    )
-                    (context as? ComponentActivity)?.startActivity(intent)
-                }
-                onComplete()
-            },
-            onOpenDashboard = onComplete,
-        )
+                        (context as? ComponentActivity)?.startActivity(intent)
+                    }
+                    onComplete()
+                },
+                onOpenDashboard = onComplete,
+            )
+        }
     } else {
         // No pairing code — show scan prompt with camera button
         Surface(

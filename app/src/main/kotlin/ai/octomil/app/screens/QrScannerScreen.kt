@@ -9,9 +9,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.google.android.gms.common.moduleinstall.ModuleInstall
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import kotlinx.coroutines.tasks.await
 
 /**
  * QR code scanner using Google Code Scanner (Play Services).
@@ -38,7 +41,20 @@ fun QrScannerScreen(
             .enableAutoZoom()
             .build()
 
+        // Ensure the scanner module is downloaded before attempting to scan.
+        // Without this, getClient() can NPE if the module isn't available yet.
         val scanner = GmsBarcodeScanning.getClient(context, options)
+        try {
+            val moduleInstallClient = ModuleInstall.getClient(context)
+            val installRequest = ModuleInstallRequest.newBuilder()
+                .addApi(scanner)
+                .build()
+            moduleInstallClient.installModules(installRequest).await()
+        } catch (e: Exception) {
+            Log.w("QrScanner", "Module install check failed: ${e.message}")
+            // Continue anyway — module may already be available
+        }
+
         scanner.startScan()
             .addOnSuccessListener { barcode ->
                 val url = barcode.rawValue

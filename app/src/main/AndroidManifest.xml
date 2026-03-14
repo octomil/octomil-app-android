@@ -28,6 +28,11 @@
         android:theme="@style/Theme.Octomil"
         android:usesCleartextTraffic="true">
 
+        <!-- Auto-download Google Code Scanner module at install time -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

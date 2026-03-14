@@ -91,20 +91,29 @@ fun SettingsScreen() {
             OutlinedTextField(
                 value = deviceToken,
                 onValueChange = { deviceToken = it },
-                label = { Text("Device Token") },
+                label = { Text("API Key") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             )
 
-            OutlinedTextField(
-                value = orgId,
-                onValueChange = { orgId = it },
-                label = { Text("Organization ID") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-            )
+            // Org ID is auto-fetched — show read-only when populated
+            if (orgId.isNotBlank()) {
+                OutlinedTextField(
+                    value = orgId,
+                    onValueChange = {},
+                    label = { Text("Organization") },
+                    singleLine = true,
+                    readOnly = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                        disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                    ),
+                )
+            }
 
             OutlinedTextField(
                 value = serverUrl,

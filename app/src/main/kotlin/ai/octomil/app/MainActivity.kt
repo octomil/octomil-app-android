@@ -101,11 +101,16 @@ class MainActivity : ComponentActivity() {
                         composable(
                             route = "${Routes.PAIR}?code={code}&token={token}&host={host}&server={server}",
                             deepLinks = listOf(
+                                // Path-based: /pair/CODE (new short format)
+                                navDeepLink { uriPattern = "octomil://pair/{code}" },
+                                navDeepLink { uriPattern = "https://octomil.com/pair/{code}" },
+                                navDeepLink { uriPattern = "https://app.octomil.com/pair/{code}" },
+                                // Query-based: /pair?token=CODE (legacy)
                                 navDeepLink { uriPattern = "octomil://pair?code={code}" },
                                 navDeepLink { uriPattern = "octomil://pair?token={token}&host={host}" },
-                                navDeepLink { uriPattern = "https://app.octomil.com/pair?code={code}" },
                                 navDeepLink { uriPattern = "https://octomil.com/pair?token={token}" },
                                 navDeepLink { uriPattern = "https://octomil.com/pair?token={token}&host={host}" },
+                                navDeepLink { uriPattern = "https://app.octomil.com/pair?code={code}" },
                             ),
                             arguments = listOf(
                                 navArgument("code") { type = NavType.StringType; defaultValue = ""; nullable = true },

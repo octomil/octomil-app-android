@@ -24,10 +24,15 @@ fun QrScannerScreen(
     onCodeScanned: (code: String, host: String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
+    val context = LocalContext.current as? android.app.Activity
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        if (context == null) {
+            error = "Camera unavailable: Activity context required"
+            return@LaunchedEffect
+        }
+
         val options = GmsBarcodeScannerOptions.Builder()
             .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
             .enableAutoZoom()

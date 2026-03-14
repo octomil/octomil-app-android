@@ -52,6 +52,7 @@ fun QrScannerScreen(
 
     // Track whether we've already fired the callback to avoid duplicates
     var scanned by remember { mutableStateOf(false) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
@@ -66,11 +67,13 @@ fun QrScannerScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (hasCameraPermission) {
+        if (hasCameraPermission && cameraError == null) {
             // Camera preview
             AndroidView(
                 factory = { ctx ->
-                    val previewView = PreviewView(ctx)
+                    val previewView = PreviewView(ctx).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     val executor = Executors.newSingleThreadExecutor()
 
@@ -105,6 +108,7 @@ fun QrScannerScreen(
                             )
                         } catch (e: Exception) {
                             Log.e("QrScanner", "Camera init failed", e)
+                            cameraError = e.message ?: "Camera failed to start"
                         }
                     }, ContextCompat.getMainExecutor(ctx))
 
@@ -160,6 +164,38 @@ fun QrScannerScreen(
                     )
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
+        } else if (cameraError != null) {
+            // Camera failed — show error with manual entry hint
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = "Camera unavailable",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Use the Pair tab to enter the code manually.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = cameraError ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = onDismiss) {
+                    Text("Go Back")
+                }
+            }
         } else {
             // Permission denied state
             Column(

@@ -1,5 +1,6 @@
 package ai.octomil.app.screens
 
+import android.util.Log
 import ai.octomil.app.OctomilApplication
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -137,7 +138,7 @@ fun SettingsScreen() {
                             // Auto-fetch org ID from server using the API key
                             isSaving = true
                             scope.launch {
-                                val fetchedOrgId = fetchOrgId(
+                                val (fetchedOrgId, error) = fetchOrgId(
                                     apiKey = deviceToken,
                                     serverUrl = serverUrl.ifBlank { "https://api.octomil.com/api/v1" },
                                 )
@@ -147,7 +148,7 @@ fun SettingsScreen() {
                                     app.saveCredentials(deviceToken, fetchedOrgId, serverUrl.ifBlank { null })
                                     statusMessage = "Connected (org: $fetchedOrgId)"
                                 } else {
-                                    statusMessage = "Could not fetch org ID — enter it manually"
+                                    statusMessage = error ?: "Could not fetch org ID"
                                 }
                             }
                         }
@@ -249,9 +250,11 @@ private fun DeviceInfoRow(label: String, value: String) {
 
 /**
  * Fetch org_id from the server using the API key.
- * Calls GET /api/v1/me which returns the authenticated user's org.
+ * Calls GET /auth/me which returns the authenticated user's org.
+ *
+ * Returns Pair(orgId, null) on success, or Pair(null, errorMessage) on failure.
  */
-private suspend fun fetchOrgId(apiKey: String, serverUrl: String): String? {
+private suspend fun fetchOrgId(apiKey: String, serverUrl: String): Pair<String?, String?> {
     return withContext(Dispatchers.IO) {
         try {
             val url = URL("$serverUrl/auth/me")
@@ -261,16 +264,22 @@ private suspend fun fetchOrgId(apiKey: String, serverUrl: String): String? {
             conn.connectTimeout = 10_000
             conn.readTimeout = 10_000
 
-            if (conn.responseCode == 200) {
+            val code = conn.responseCode
+            if (code == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
-                // Parse org_id from JSON response
+                Log.d("Settings", "/auth/me 200: $body")
                 val orgIdMatch = Regex(""""org_id"\s*:\s*"([^"]+)"""").find(body)
-                orgIdMatch?.groupValues?.get(1)
+                val orgId = orgIdMatch?.groupValues?.get(1)
+                if (orgId != null) orgId to null
+                else null to "Server returned 200 but no org_id in response"
             } else {
-                null
+                val errorBody = try { conn.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
+                Log.e("Settings", "/auth/me failed: HTTP $code — $errorBody")
+                null to "HTTP $code: ${errorBody ?: conn.responseMessage}"
             }
-        } catch (_: Exception) {
-            null
+        } catch (e: Exception) {
+            Log.e("Settings", "/auth/me exception", e)
+            null to "Connection failed: ${e.message}"
         }
     }
 }

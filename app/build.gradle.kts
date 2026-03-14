@@ -75,11 +75,9 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.16.0")
 
-    // CameraX + ML Kit barcode scanning for in-app QR scanner
-    implementation("androidx.camera:camera-camera2:1.4.2")
-    implementation("androidx.camera:camera-lifecycle:1.4.2")
-    implementation("androidx.camera:camera-view:1.4.2")
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // Google Code Scanner — handles camera internally via Play Services,
+    // bypasses CameraX (which crashes on some Samsung devices).
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

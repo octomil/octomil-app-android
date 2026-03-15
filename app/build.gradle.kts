@@ -53,6 +53,12 @@ android {
             isReturnDefaultValues = true
         }
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
@@ -79,6 +85,13 @@ dependencies {
     // Google Code Scanner — handles camera internally via Play Services,
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+
+    // TFLite for on-device image classification (multimodal chat)
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-support:0.5.0")
+
+    // Coil for async image loading in Compose
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

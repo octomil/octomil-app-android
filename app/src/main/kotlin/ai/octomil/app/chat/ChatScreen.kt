@@ -1,6 +1,14 @@
 package ai.octomil.app.chat
 
+import ai.octomil.android.LocalAttachment
 import ai.octomil.chat.ThreadMessage
+import ai.octomil.responses.ContentPart
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,14 +19,22 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,7 +45,14 @@ fun ChatScreen(
     val uiState by viewModel.uiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
+    val pendingAttachment by viewModel.pendingAttachment.collectAsState()
     val listState = rememberLazyListState()
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) viewModel.attachImage(uri)
+    }
 
     // Auto-scroll on new messages or streaming text
     LaunchedEffect(messages.size, streamingText) {
@@ -127,6 +150,13 @@ fun ChatScreen(
                         isGenerating = uiState is ChatViewModel.UiState.Generating,
                         onSend = { viewModel.sendMessage(it) },
                         onCancel = { viewModel.cancelGeneration() },
+                        pendingAttachment = pendingAttachment,
+                        onAttach = {
+                            imagePickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onClearAttachment = { viewModel.clearAttachment() },
                     )
                 }
             }
@@ -153,11 +183,40 @@ private fun ChatBubble(message: ThreadMessage) {
             color = bgColor,
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
-            Text(
-                text = message.content ?: "",
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            Column(modifier = Modifier.padding(12.dp)) {
+                // Render image content parts
+                message.contentParts?.filterIsInstance<ContentPart.Image>()?.forEach { imagePart ->
+                    val imageData = imagePart.data
+                    if (imageData != null) {
+                        val bytes = Base64.decode(imageData, Base64.DEFAULT)
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bitmap != null) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(bitmap)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Attached image",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 200.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Fit,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+
+                // Text content
+                val textContent = message.content
+                if (!textContent.isNullOrBlank()) {
+                    Text(
+                        text = textContent,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
         }
 
         // Metrics chip for completed assistant messages
@@ -178,6 +237,9 @@ private fun ChatInputBar(
     isGenerating: Boolean,
     onSend: (String) -> Unit,
     onCancel: () -> Unit,
+    pendingAttachment: LocalAttachment? = null,
+    onAttach: () -> Unit = {},
+    onClearAttachment: () -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
 
@@ -187,51 +249,93 @@ private fun ChatInputBar(
             .fillMaxWidth()
             .imePadding(),
     ) {
-        Row(
-            modifier = Modifier
-                .padding(8.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Message") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (text.isNotBlank() && !isGenerating) {
-                            onSend(text)
-                            text = ""
-                        }
-                    },
-                ),
-                singleLine = true,
-                enabled = !isGenerating,
-            )
+        Column {
+            // Pending attachment chip
+            if (pendingAttachment != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AsyncImage(
+                        model = pendingAttachment.contentUri,
+                        contentDescription = "Pending attachment",
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = pendingAttachment.displayName ?: "Image",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = onClearAttachment) {
+                        Icon(Icons.Default.Close, contentDescription = "Remove attachment")
+                    }
+                }
+            }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            if (isGenerating) {
-                IconButton(onClick = onCancel) {
+            Row(
+                modifier = Modifier
+                    .padding(8.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = onAttach,
+                    enabled = !isGenerating,
+                ) {
                     Icon(
-                        Icons.Default.Stop,
-                        contentDescription = "Cancel",
-                        tint = MaterialTheme.colorScheme.error,
+                        Icons.Default.Add,
+                        contentDescription = "Attach image",
                     )
                 }
-            } else {
-                IconButton(
-                    onClick = {
-                        if (text.isNotBlank()) {
-                            onSend(text)
-                            text = ""
-                        }
-                    },
-                    enabled = text.isNotBlank(),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Message") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if ((text.isNotBlank() || pendingAttachment != null) && !isGenerating) {
+                                onSend(text)
+                                text = ""
+                            }
+                        },
+                    ),
+                    singleLine = true,
+                    enabled = !isGenerating,
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                if (isGenerating) {
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = "Cancel",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = {
+                            if (text.isNotBlank() || pendingAttachment != null) {
+                                onSend(text)
+                                text = ""
+                            }
+                        },
+                        enabled = text.isNotBlank() || pendingAttachment != null,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                    }
                 }
             }
         }

@@ -73,7 +73,10 @@ class ChatViewModel(
                 _uiState.value = UiState.Loading("Resolving model…")
                 val context = getApplication<Application>()
                 val modelFile = ModelResolver.paired().resolve(context, modelName)
-                    ?: throw IllegalStateException("Model '$modelName' not found on device")
+                    ?: throw IllegalStateException(
+                        "Model '$modelName' not found on device. " +
+                        "Re-run: octomil deploy $modelName --phone"
+                    )
 
                 _uiState.value = UiState.Loading("Loading ${modelFile.name}…")
                 val factory = LLMRuntimeRegistry.factory

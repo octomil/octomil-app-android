@@ -1,13 +1,19 @@
 package ai.octomil.app.chat
 
 import ai.octomil.ModelResolver
+import ai.octomil.chat.ChatThread
 import ai.octomil.chat.GenerateConfig
+import ai.octomil.chat.GenerationMetrics
 import ai.octomil.chat.LLMRuntime
 import ai.octomil.chat.LLMRuntimeRegistry
+import ai.octomil.chat.ThreadMessage
+import ai.octomil.app.OctomilApplication
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,21 +45,19 @@ class ChatViewModel(
 
     // ── Chat history ──
 
-    data class ChatMessage(
-        val role: String, // "user" or "assistant"
-        val content: String,
-        val metrics: GenerationMetrics? = null,
-    )
+    private var thread: ChatThread? = null
 
-    data class GenerationMetrics(
-        val ttftMs: Long,
-        val decodeTokensPerSec: Double,
-        val totalTokens: Int,
-        val totalLatencyMs: Long,
-    )
+    private fun ensureThread(): ChatThread {
+        return thread ?: ChatThread(
+            id = "thread_${UUID.randomUUID()}",
+            model = modelName,
+            createdAt = Instant.now().toString(),
+            updatedAt = Instant.now().toString(),
+        ).also { thread = it }
+    }
 
-    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+    private val _messages = MutableStateFlow<List<ThreadMessage>>(emptyList())
+    val messages: StateFlow<List<ThreadMessage>> = _messages.asStateFlow()
 
     private val _streamingText = MutableStateFlow("")
     val streamingText: StateFlow<String> = _streamingText.asStateFlow()
@@ -70,9 +74,19 @@ class ChatViewModel(
     private fun preload() {
         viewModelScope.launch {
             try {
+                val app = getApplication<OctomilApplication>()
+
+                // Check if we already have a loaded runtime for this model
+                val cached = app.getCachedRuntime(modelName)
+                if (cached != null) {
+                    runtime = cached
+                    _uiState.value = UiState.Ready
+                    Log.i(TAG, "Using cached runtime for: $modelName")
+                    return@launch
+                }
+
                 _uiState.value = UiState.Loading("Resolving model…")
-                val context = getApplication<Application>()
-                val modelFile = ModelResolver.paired().resolve(context, modelName)
+                val modelFile = ModelResolver.paired().resolve(app, modelName)
                     ?: throw IllegalStateException(
                         "Model '$modelName' not found on device. " +
                         "Re-run: octomil deploy $modelName --phone"
@@ -83,18 +97,22 @@ class ChatViewModel(
                     ?: throw IllegalStateException("No LLMRuntime factory registered")
 
                 val llmRuntime = factory(modelFile)
-                runtime = llmRuntime
 
                 // Eager load if the runtime supports it
                 if (llmRuntime is LlamaCppRuntime) {
                     llmRuntime.loadModel()
                 }
 
+                runtime = llmRuntime
+                app.cacheRuntime(modelName, llmRuntime)
+
                 _uiState.value = UiState.Ready
                 Log.i(TAG, "Model preloaded: $modelName")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to preload model", e)
-                _uiState.value = UiState.Error(e.message ?: "Unknown error")
+                Log.e(TAG, "Failed to preload model: ${e::class.simpleName}: ${e.message}", e)
+                _uiState.value = UiState.Error(
+                    "${e::class.simpleName}: ${e.message ?: "Unknown error"}"
+                )
             }
         }
     }
@@ -107,14 +125,22 @@ class ChatViewModel(
         cancelGeneration()
 
         // Add user message
-        val updated = _messages.value + ChatMessage(role = "user", content = text)
-        _messages.value = updated
+        val t = ensureThread()
+        val userMsg = ThreadMessage(
+            id = "msg_${UUID.randomUUID()}",
+            threadId = t.id,
+            role = "user",
+            content = text,
+            createdAt = Instant.now().toString(),
+        )
+        _messages.value = _messages.value + userMsg
         _streamingText.value = ""
         _uiState.value = UiState.Generating
 
         generationJob = viewModelScope.launch {
             try {
-                val prompt = buildPrompt(updated)
+                // Send only the latest user message — the engine maintains
+                // its own KV cache for multi-turn conversation context.
                 val config = GenerateConfig(maxTokens = 1024, temperature = 0.7f)
 
                 val startTime = System.nanoTime()
@@ -122,7 +148,7 @@ class ChatViewModel(
                 var tokenCount = 0
                 val buffer = StringBuilder()
 
-                currentRuntime.generate(prompt, config).collect { token ->
+                currentRuntime.generate(text, config).collect { token ->
                     if (tokenCount == 0) {
                         ttftNanos = System.nanoTime() - startTime
                     }
@@ -149,10 +175,13 @@ class ChatViewModel(
                 )
 
                 // Add assistant message with metrics
-                _messages.value = _messages.value + ChatMessage(
+                _messages.value = _messages.value + ThreadMessage(
+                    id = "msg_${UUID.randomUUID()}",
+                    threadId = t.id,
                     role = "assistant",
                     content = buffer.toString(),
                     metrics = metrics,
+                    createdAt = Instant.now().toString(),
                 )
                 _streamingText.value = ""
                 _uiState.value = UiState.Ready
@@ -165,9 +194,12 @@ class ChatViewModel(
                 // Cancelled — keep partial text as assistant message
                 val partial = _streamingText.value
                 if (partial.isNotBlank()) {
-                    _messages.value = _messages.value + ChatMessage(
+                    _messages.value = _messages.value + ThreadMessage(
+                        id = "msg_${UUID.randomUUID()}",
+                        threadId = t.id,
                         role = "assistant",
                         content = "$partial [cancelled]",
+                        createdAt = Instant.now().toString(),
                     )
                 }
                 _streamingText.value = ""
@@ -185,22 +217,10 @@ class ChatViewModel(
         generationJob = null
     }
 
-    private fun buildPrompt(messages: List<ChatMessage>): String {
-        // Simple multi-turn prompt format (works with most GGUF chat models)
-        return buildString {
-            for (msg in messages) {
-                when (msg.role) {
-                    "user" -> append("<|user|>\n${msg.content}\n")
-                    "assistant" -> append("<|assistant|>\n${msg.content}\n")
-                }
-            }
-            append("<|assistant|>\n")
-        }
-    }
-
     override fun onCleared() {
         cancelGeneration()
-        runtime?.close()
+        // Don't close the runtime — it's cached in OctomilApplication
+        // for instant reuse when navigating back to chat.
         runtime = null
         super.onCleared()
     }

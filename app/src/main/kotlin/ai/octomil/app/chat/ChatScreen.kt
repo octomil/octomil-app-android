@@ -1,6 +1,6 @@
 package ai.octomil.app.chat
 
-import androidx.compose.foundation.background
+import ai.octomil.chat.ThreadMessage
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 
@@ -109,9 +110,12 @@ fun ChatScreen(
                         if (streamingText.isNotEmpty()) {
                             item {
                                 ChatBubble(
-                                    ChatViewModel.ChatMessage(
+                                    ThreadMessage(
+                                        id = "msg_streaming",
+                                        threadId = "",
                                         role = "assistant",
                                         content = streamingText,
+                                        createdAt = "",
                                     ),
                                 )
                             }
@@ -131,7 +135,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatBubble(message: ChatViewModel.ChatMessage) {
+private fun ChatBubble(message: ThreadMessage) {
     val isUser = message.role == "user"
     val alignment = if (isUser) Alignment.End else Alignment.Start
     val bgColor = if (isUser) {
@@ -150,7 +154,7 @@ private fun ChatBubble(message: ChatViewModel.ChatMessage) {
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
             Text(
-                text = message.content,
+                text = message.content ?: "",
                 modifier = Modifier.padding(12.dp),
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -179,7 +183,9 @@ private fun ChatInputBar(
 
     Surface(
         tonalElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding(),
     ) {
         Row(
             modifier = Modifier

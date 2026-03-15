@@ -25,7 +25,7 @@ includeBuild("octomil-android") {
 }
 
 // Include llama.cpp Android lib for on-device LLM inference
-includeBuild("../research/engines/llama.cpp/examples/llama.android") {
+includeBuild(settings.settingsDir.resolve("..").resolve("research/engines/llama.cpp/examples/llama.android").canonicalFile) {
     dependencySubstitution {
         substitute(module("com.arm.aichat:lib")).using(project(":lib"))
     }

@@ -1,14 +1,23 @@
 package ai.octomil.app.chat
 
 import ai.octomil.ModelResolver
+import ai.octomil.android.AttachmentResolver
+import ai.octomil.android.LocalAttachment
 import ai.octomil.chat.ChatThread
+import ai.octomil.chat.ClassifierFallbackAdapter
+import ai.octomil.chat.ContentPartValidation
+import ai.octomil.chat.ExperimentalClassifierApi
 import ai.octomil.chat.GenerateConfig
 import ai.octomil.chat.GenerationMetrics
 import ai.octomil.chat.LLMRuntime
 import ai.octomil.chat.LLMRuntimeRegistry
+import ai.octomil.chat.MultimodalAdapter
 import ai.octomil.chat.ThreadMessage
+import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
 import android.app.Application
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -61,6 +70,21 @@ class ChatViewModel(
 
     private val _streamingText = MutableStateFlow("")
     val streamingText: StateFlow<String> = _streamingText.asStateFlow()
+
+    // ── Multimodal ──
+
+    private val attachmentResolver = AttachmentResolver(application)
+
+    @OptIn(ExperimentalClassifierApi::class)
+    private val multimodalAdapter: MultimodalAdapter = run {
+        val classifier = ImageClassifier(application)
+        ClassifierFallbackAdapter { base64Data ->
+            classifier.classifyBase64(base64Data)
+        }
+    }
+
+    private val _pendingAttachment = MutableStateFlow<LocalAttachment?>(null)
+    val pendingAttachment: StateFlow<LocalAttachment?> = _pendingAttachment.asStateFlow()
 
     // ── Internal ──
 
@@ -118,11 +142,32 @@ class ChatViewModel(
     }
 
     fun sendMessage(text: String) {
-        if (text.isBlank()) return
+        if (text.isBlank() && _pendingAttachment.value == null) return
         val currentRuntime = runtime ?: return
 
         // Cancel any active generation
         cancelGeneration()
+
+        // --- multimodal attachment handling ---
+        val attachment = _pendingAttachment.value
+        val contentParts: List<ContentPart>?
+        val runtimePrompt: String
+
+        if (attachment != null) {
+            val resolvedImage = attachmentResolver.resolve(attachment)
+            val parts = buildList {
+                if (text.isNotBlank()) add(ContentPart.Text(text))
+                add(resolvedImage)
+            }
+            ContentPartValidation.validate(parts)
+            contentParts = parts
+            @OptIn(ExperimentalClassifierApi::class)
+            runtimePrompt = multimodalAdapter.preparePrompt(parts)
+            _pendingAttachment.value = null
+        } else {
+            contentParts = null
+            runtimePrompt = text
+        }
 
         // Add user message
         val t = ensureThread()
@@ -130,7 +175,12 @@ class ChatViewModel(
             id = "msg_${UUID.randomUUID()}",
             threadId = t.id,
             role = "user",
-            content = text,
+            content = if (contentParts != null) {
+                ContentPartValidation.deriveContent(contentParts) ?: text
+            } else {
+                text
+            },
+            contentParts = contentParts,
             createdAt = Instant.now().toString(),
         )
         _messages.value = _messages.value + userMsg
@@ -148,7 +198,7 @@ class ChatViewModel(
                 var tokenCount = 0
                 val buffer = StringBuilder()
 
-                currentRuntime.generate(text, config).collect { token ->
+                currentRuntime.generate(runtimePrompt, config).collect { token ->
                     if (tokenCount == 0) {
                         ttftNanos = System.nanoTime() - startTime
                     }
@@ -210,6 +260,25 @@ class ChatViewModel(
                 _streamingText.value = ""
             }
         }
+    }
+
+    fun attachImage(uri: Uri) {
+        val mediaType = application.contentResolver.getType(uri) ?: "image/jpeg"
+        val displayName = application.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) cursor.getString(nameIndex) else null
+            } else null
+        }
+        _pendingAttachment.value = LocalAttachment(
+            contentUri = uri,
+            mediaType = mediaType,
+            displayName = displayName,
+        )
+    }
+
+    fun clearAttachment() {
+        _pendingAttachment.value = null
     }
 
     fun cancelGeneration() {

@@ -23,3 +23,10 @@ includeBuild("octomil-android") {
         substitute(module("ai.octomil:octomil-ui")).using(project(":octomil"))
     }
 }
+
+// Include llama.cpp Android lib for on-device LLM inference
+includeBuild("../research/engines/llama.cpp/examples/llama.android") {
+    dependencySubstitution {
+        substitute(module("com.arm.aichat:lib")).using(project(":lib"))
+    }
+}

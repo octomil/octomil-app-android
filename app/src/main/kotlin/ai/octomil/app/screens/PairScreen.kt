@@ -10,14 +10,13 @@ import ai.octomil.config.OctomilConfig
 import ai.octomil.pairing.ui.PairingScreen
 import ai.octomil.pairing.ui.PairingState
 import ai.octomil.pairing.ui.PairingViewModel
-import ai.octomil.tryitout.TryItOutActivity
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +29,7 @@ fun PairScreen(
     initialCode: String? = null,
     host: String? = null,
     onComplete: () -> Unit,
+    onNavigateToChat: (modelName: String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = OctomilApplication.instance
@@ -49,10 +49,10 @@ fun PairScreen(
         }
     }
 
-    // Track code/host — can be updated by QR scanner
-    var activeCode by remember { mutableStateOf(initialCode ?: "") }
-    var activeHost by remember { mutableStateOf(host ?: "https://api.octomil.com/api/v1") }
-    var showScanner by remember { mutableStateOf(false) }
+    // Track code/host — survives rotation via rememberSaveable
+    var activeCode by rememberSaveable { mutableStateOf(initialCode ?: "") }
+    var activeHost by rememberSaveable { mutableStateOf(host ?: "https://api.octomil.com") }
+    var showScanner by rememberSaveable { mutableStateOf(false) }
 
     // Update if deep link params change
     LaunchedEffect(initialCode, host) {
@@ -125,34 +125,33 @@ fun PairScreen(
                 )
             )
 
+            // Auto-add model to paired list on success
+            val currentState by viewModel.state.collectAsState()
+            LaunchedEffect(currentState) {
+                val s = currentState
+                if (s is PairingState.Success) {
+                    app.addPairedModel(
+                        PairedModel(
+                            name = s.modelName,
+                            version = s.modelVersion,
+                            sizeBytes = s.sizeBytes,
+                            sizeString = formatBytes(s.sizeBytes),
+                            runtime = s.runtime,
+                            modality = s.modality,
+                        )
+                    )
+                }
+            }
+
             PairingScreen(
                 viewModel = viewModel,
                 onTryItOut = {
                     val state = viewModel.state.value
                     if (state is PairingState.Success) {
-                        // Store the paired model
-                        app.addPairedModel(
-                            PairedModel(
-                                name = state.modelName,
-                                version = state.modelVersion,
-                                sizeBytes = state.sizeBytes,
-                                sizeString = formatBytes(state.sizeBytes),
-                                runtime = state.runtime,
-                                modality = state.modality,
-                            )
-                        )
-
-                        val intent = TryItOutActivity.createIntent(
-                            context = context,
-                            modelName = state.modelName,
-                            modelVersion = state.modelVersion,
-                            sizeBytes = state.sizeBytes,
-                            runtime = state.runtime,
-                            modality = state.modality,
-                        )
-                        (context as? ComponentActivity)?.startActivity(intent)
+                        onNavigateToChat(state.modelName)
+                    } else {
+                        onComplete()
                     }
-                    onComplete()
                 },
                 onOpenDashboard = onComplete,
             )

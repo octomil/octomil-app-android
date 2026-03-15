@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "ai.octomil.app"
-        minSdk = 26
+        minSdk = 33  // llama.cpp native lib requires API 33+
         targetSdk = 36
         versionCode = 14
         versionName = "1.3.4"
@@ -58,6 +58,7 @@ android {
 dependencies {
     implementation("ai.octomil:octomil-client")
     implementation("ai.octomil:octomil-ui")
+    implementation("com.arm.aichat:lib")
 
     implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     implementation("androidx.compose.ui:ui")

@@ -20,10 +20,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import ai.octomil.app.chat.ChatScreen
+import ai.octomil.app.chat.ChatViewModel
 import ai.octomil.app.screens.HomeScreen
 import ai.octomil.app.screens.ModelDetailScreen
 import ai.octomil.app.screens.PairScreen
 import ai.octomil.app.screens.SettingsScreen
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 class MainActivity : ComponentActivity() {
 
@@ -133,6 +137,10 @@ class MainActivity : ComponentActivity() {
                                         popUpTo(Routes.HOME) { inclusive = true }
                                     }
                                 },
+                                onNavigateToChat = { modelName ->
+                                    val encoded = URLEncoder.encode(modelName, "UTF-8")
+                                    navController.navigate("${Routes.CHAT}/$encoded")
+                                },
                             )
                         }
 
@@ -146,8 +154,36 @@ class MainActivity : ComponentActivity() {
                             val model = OctomilApplication.instance.pairedModels
                                 .firstOrNull { it.name == modelId }
                             if (model != null) {
-                                ModelDetailScreen(model = model)
+                                ModelDetailScreen(
+                                    model = model,
+                                    onTryModel = { modelName ->
+                                        val encoded = URLEncoder.encode(modelName, "UTF-8")
+                                        navController.navigate("${Routes.CHAT}/$encoded")
+                                    },
+                                )
                             }
+                        }
+
+                        composable(
+                            route = "${Routes.CHAT}/{modelName}",
+                            arguments = listOf(
+                                navArgument("modelName") { type = NavType.StringType },
+                            ),
+                        ) { backStackEntry ->
+                            val modelName = URLDecoder.decode(
+                                backStackEntry.arguments?.getString("modelName") ?: "",
+                                "UTF-8",
+                            )
+                            val viewModel: ChatViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                                factory = ChatViewModelFactory(
+                                    application = navController.context.applicationContext as android.app.Application,
+                                    modelName = modelName,
+                                ),
+                            )
+                            ChatScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                            )
                         }
 
                         composable(Routes.SETTINGS) {
@@ -169,7 +205,18 @@ object Routes {
     const val HOME = "home"
     const val PAIR = "pair"
     const val MODEL_DETAIL = "model_detail"
+    const val CHAT = "chat"
     const val SETTINGS = "settings"
+}
+
+class ChatViewModelFactory(
+    private val application: android.app.Application,
+    private val modelName: String,
+) : androidx.lifecycle.ViewModelProvider.Factory {
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        @Suppress("UNCHECKED_CAST")
+        return ChatViewModel(application, modelName) as T
+    }
 }
 
 @Composable

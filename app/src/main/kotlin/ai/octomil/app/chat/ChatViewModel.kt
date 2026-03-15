@@ -148,47 +148,50 @@ class ChatViewModel(
         // Cancel any active generation
         cancelGeneration()
 
-        // --- multimodal attachment handling ---
+        // Capture and clear attachment before launching coroutine
         val attachment = _pendingAttachment.value
-        val contentParts: List<ContentPart>?
-        val runtimePrompt: String
+        if (attachment != null) _pendingAttachment.value = null
 
-        if (attachment != null) {
-            val resolvedImage = attachmentResolver.resolve(attachment)
-            val parts = buildList {
-                if (text.isNotBlank()) add(ContentPart.Text(text))
-                add(resolvedImage)
-            }
-            ContentPartValidation.validate(parts)
-            contentParts = parts
-            @OptIn(ExperimentalClassifierApi::class)
-            runtimePrompt = multimodalAdapter.preparePrompt(parts)
-            _pendingAttachment.value = null
-        } else {
-            contentParts = null
-            runtimePrompt = text
-        }
-
-        // Add user message
-        val t = ensureThread()
-        val userMsg = ThreadMessage(
-            id = "msg_${UUID.randomUUID()}",
-            threadId = t.id,
-            role = "user",
-            content = if (contentParts != null) {
-                ContentPartValidation.deriveContent(contentParts) ?: text
-            } else {
-                text
-            },
-            contentParts = contentParts,
-            createdAt = Instant.now().toString(),
-        )
-        _messages.value = _messages.value + userMsg
         _streamingText.value = ""
         _uiState.value = UiState.Generating
 
         generationJob = viewModelScope.launch {
             try {
+                // --- multimodal attachment handling (suspend) ---
+                val contentParts: List<ContentPart>?
+                val runtimePrompt: String
+
+                if (attachment != null) {
+                    val resolvedImage = attachmentResolver.resolve(attachment)
+                    val parts = buildList {
+                        if (text.isNotBlank()) add(ContentPart.Text(text))
+                        add(resolvedImage)
+                    }
+                    ContentPartValidation.validate(parts)
+                    contentParts = parts
+                    @OptIn(ExperimentalClassifierApi::class)
+                    runtimePrompt = multimodalAdapter.preparePrompt(parts)
+                } else {
+                    contentParts = null
+                    runtimePrompt = text
+                }
+
+                // Add user message
+                val t = ensureThread()
+                val userMsg = ThreadMessage(
+                    id = "msg_${UUID.randomUUID()}",
+                    threadId = t.id,
+                    role = "user",
+                    content = if (contentParts != null) {
+                        ContentPartValidation.deriveContent(contentParts) ?: text
+                    } else {
+                        text
+                    },
+                    contentParts = contentParts,
+                    createdAt = Instant.now().toString(),
+                )
+                _messages.value = _messages.value + userMsg
+
                 // Send only the latest user message — the engine maintains
                 // its own KV cache for multi-turn conversation context.
                 val config = GenerateConfig(maxTokens = 1024, temperature = 0.7f)

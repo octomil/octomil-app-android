@@ -161,8 +161,8 @@ private fun ChatBubble(message: ThreadMessage) {
         }
 
         // Metrics chip for completed assistant messages
-        if (!isUser && message.metrics != null) {
-            val m = message.metrics
+        val m = message.metrics
+        if (!isUser && m != null) {
             Text(
                 text = "TTFT ${m.ttftMs}ms · ${String.format("%.1f", m.decodeTokensPerSec)} tok/s · ${m.totalTokens} tokens",
                 style = MaterialTheme.typography.labelSmall,

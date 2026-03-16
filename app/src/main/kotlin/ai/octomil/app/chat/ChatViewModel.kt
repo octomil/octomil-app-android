@@ -12,6 +12,11 @@ import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
+import ai.octomil.app.keyboard.PredictionState
+import ai.octomil.app.keyboard.TokenSuggestionFilter
+import ai.octomil.app.voice.AudioRecorder
+import ai.octomil.app.voice.VoiceState
+import ai.octomil.app.voice.WhisperRuntime
 import ai.octomil.runtime.ModelKeepAliveService
 import android.app.Application
 import android.net.Uri
@@ -20,10 +25,13 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.arm.aichat.AiChat
+import com.arm.aichat.InferenceEngine
 import com.arm.aichat.ProgressListener
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,6 +85,28 @@ class ChatViewModel(
 
     private val _pendingAttachment = MutableStateFlow<LocalAttachment?>(null)
     val pendingAttachment: StateFlow<LocalAttachment?> = _pendingAttachment.asStateFlow()
+
+    // ── Voice (Whisper) ──
+
+    private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
+    val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
+
+    private val _transcribedText = MutableStateFlow("")
+    val transcribedText: StateFlow<String> = _transcribedText.asStateFlow()
+
+    private val recorder = AudioRecorder()
+    val recordingDurationMs: StateFlow<Long> = recorder.durationMs
+
+    private var whisperRuntime: WhisperRuntime? = null
+
+    // ── Keyboard Prediction (SmolLM2) ──
+
+    private val _predictionState = MutableStateFlow<PredictionState>(PredictionState.Idle)
+    val predictionState: StateFlow<PredictionState> = _predictionState.asStateFlow()
+
+    private var predictionHandle: Long? = null
+    private var predictionJob: Job? = null
+    private var predictionIdleJob: Job? = null
 
     // ── Internal ──
 
@@ -324,6 +354,108 @@ class ChatViewModel(
         }
     }
 
+    // ── Voice Flow ──
+
+    fun startRecording() {
+        _voiceState.value = VoiceState.Recording
+        recorder.startRecording()
+    }
+
+    fun stopAndTranscribe() {
+        viewModelScope.launch {
+            try {
+                val samples = recorder.stopRecording()
+
+                // Load whisper on demand
+                if (whisperRuntime == null) {
+                    _voiceState.value = VoiceState.LoadingModel
+                    val app = getApplication<OctomilApplication>()
+                    val modelsDir = app.filesDir.resolve("octomil_models/whisper-base/1.0.0")
+                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
+                        ?: error("Whisper model not found in ${modelsDir.absolutePath}")
+                    whisperRuntime = WhisperRuntime(file).also { it.loadModel() }
+                }
+
+                _voiceState.value = VoiceState.Transcribing
+                val text = whisperRuntime!!.transcribe(samples)
+
+                // Unload immediately — free ~148MB native memory
+                whisperRuntime!!.release()
+                whisperRuntime = null
+
+                _voiceState.value = VoiceState.Idle
+                _transcribedText.value = text.trim()
+            } catch (e: Exception) {
+                Log.e(TAG, "Transcription failed", e)
+                // Clean up whisper on error
+                whisperRuntime?.release()
+                whisperRuntime = null
+                _voiceState.value = VoiceState.Error(e.message ?: "Transcription failed")
+            }
+        }
+    }
+
+    fun dismissVoiceError() {
+        _voiceState.value = VoiceState.Idle
+    }
+
+    fun consumeTranscribedText() {
+        _transcribedText.value = ""
+    }
+
+    // ── Keyboard Prediction Flow ──
+
+    fun onTextChanged(text: String) {
+        if (text.isBlank()) {
+            _predictionState.value = PredictionState.Idle
+            return
+        }
+
+        predictionJob?.cancel()
+        predictionJob = viewModelScope.launch {
+            delay(200) // debounce
+
+            val app = getApplication<OctomilApplication>()
+            val engine = AiChat.getInferenceEngine(app)
+
+            // Load prediction model on demand
+            if (predictionHandle == null) {
+                _predictionState.value = PredictionState.Loading
+                val modelsDir = app.filesDir.resolve("octomil_models/smollm2-135m/1.0.0")
+                val file = modelsDir.listFiles()?.firstOrNull { it.extension == "gguf" }
+                if (file == null) {
+                    Log.w(TAG, "SmolLM2 prediction model not found")
+                    _predictionState.value = PredictionState.Idle
+                    return@launch
+                }
+                predictionHandle = engine.loadModelHandle(file.absolutePath)
+            }
+
+            val raw = engine.predictNext(predictionHandle!!, text, k = 8)
+            val suggestions = TokenSuggestionFilter.process(raw)
+            _predictionState.value = if (suggestions.isNotEmpty()) {
+                PredictionState.Ready(suggestions)
+            } else {
+                PredictionState.Idle
+            }
+            resetPredictionIdleTimeout()
+        }
+    }
+
+    private fun resetPredictionIdleTimeout() {
+        predictionIdleJob?.cancel()
+        predictionIdleJob = viewModelScope.launch {
+            delay(30_000) // 30s idle timeout
+            val handle = predictionHandle ?: return@launch
+            val app = getApplication<OctomilApplication>()
+            val engine = AiChat.getInferenceEngine(app)
+            engine.unloadHandle(handle)
+            predictionHandle = null
+            _predictionState.value = PredictionState.Idle
+            Log.i(TAG, "Prediction model unloaded after idle timeout")
+        }
+    }
+
     fun attachImage(uri: Uri) {
         val app = getApplication<Application>()
         val mediaType = app.contentResolver.getType(uri) ?: "image/jpeg"
@@ -351,6 +483,28 @@ class ChatViewModel(
 
     override fun onCleared() {
         cancelGeneration()
+        predictionJob?.cancel()
+        predictionIdleJob?.cancel()
+
+        // Unload prediction model if loaded
+        predictionHandle?.let { handle ->
+            viewModelScope.launch {
+                try {
+                    val app = getApplication<OctomilApplication>()
+                    AiChat.getInferenceEngine(app).unloadHandle(handle)
+                } catch (_: Exception) {}
+            }
+        }
+        predictionHandle = null
+
+        // Release whisper if loaded
+        whisperRuntime?.let { runtime ->
+            viewModelScope.launch {
+                try { runtime.release() } catch (_: Exception) {}
+            }
+        }
+        whisperRuntime = null
+
         // Stop the keep-alive service when leaving chat
         ModelKeepAliveService.stop(getApplication())
         // Don't close the runtime — it's cached in OctomilApplication

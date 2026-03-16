@@ -96,13 +96,6 @@ class OctomilApplication : Application() {
         super.onCreate()
         instance = this
 
-        // Plant Timber for SDK debug logging
-        try {
-            val treeClass = Class.forName("timber.log.Timber\$DebugTree")
-            val plantMethod = Class.forName("timber.log.Timber").getMethod("plant", Class.forName("timber.log.Timber\$Tree"))
-            plantMethod.invoke(null, treeClass.getDeclaredConstructor().newInstance())
-        } catch (_: Exception) { /* Timber not on classpath */ }
-
         // Register llama.cpp as the LLM runtime for GGUF models
         LLMRuntimeRegistry.factory = { modelFile ->
             // Look for mmproj file alongside the model
@@ -138,7 +131,9 @@ class OctomilApplication : Application() {
         }
 
         loadPairedModels()
-        startLocalServer()
+
+        // Start server + mDNS off main thread to speed up cold launch
+        Thread { startLocalServer() }.start()
     }
 
     fun addPairedModel(model: PairedModel) {
@@ -146,6 +141,11 @@ class OctomilApplication : Application() {
             pairedModels.add(model)
             savePairedModels()
         }
+    }
+
+    fun removePairedModel(name: String) {
+        pairedModels.removeAll { it.name == name }
+        savePairedModels()
     }
 
     fun clearPairedModels() {

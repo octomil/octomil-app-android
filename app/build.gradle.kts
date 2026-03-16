@@ -52,6 +52,18 @@ android {
             )
             signingConfig = signingConfigs.getByName("release")
         }
+        // Optimised debug: R8 shrinking with debug signing — fast for demos
+        create("benchmark") {
+            initWith(getByName("debug"))
+            isDebuggable = false
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release", "debug")
+        }
     }
 
     compileOptions {

@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,6 +55,7 @@ fun LabsScreen() {
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -229,6 +231,26 @@ private fun PredictionCard() {
 
     val isModelLoaded = predictionHandle != null
 
+    // Reusable predict function — called by button and after chip tap
+    fun predictNext(text: String) {
+        scope.launch {
+            isPredicting = true
+            status = "predicting\u2026"
+            try {
+                val t0 = System.currentTimeMillis()
+                val raw = engine!!.predictNext(predictionHandle!!, text, k = 8)
+                val elapsed = System.currentTimeMillis() - t0
+                suggestions = TokenSuggestionFilter.process(raw)
+                status = "predicted (${elapsed}ms), ${raw.size} raw \u2192 ${suggestions.size} suggestions"
+            } catch (e: Exception) {
+                Log.e(TAG, "Prediction failed", e)
+                status = "prediction failed: ${e.message}"
+            } finally {
+                isPredicting = false
+            }
+        }
+    }
+
     LabCard(
         icon = { LabCardIcon(Icons.Outlined.Psychology, OctomilColors.Indigo400) },
         title = "Next-Token Prediction",
@@ -280,24 +302,7 @@ private fun PredictionCard() {
         // Predict
         LabButton(
             text = "Predict next",
-            onClick = {
-                scope.launch {
-                    isPredicting = true
-                    status = "predicting\u2026"
-                    try {
-                        val t0 = System.currentTimeMillis()
-                        val raw = engine!!.predictNext(predictionHandle!!, inputText, k = 8)
-                        val elapsed = System.currentTimeMillis() - t0
-                        suggestions = TokenSuggestionFilter.process(raw)
-                        status = "predicted (${elapsed}ms), ${raw.size} raw \u2192 ${suggestions.size} suggestions"
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Prediction failed", e)
-                        status = "prediction failed: ${e.message}"
-                    } finally {
-                        isPredicting = false
-                    }
-                }
-            },
+            onClick = { predictNext(inputText) },
             enabled = isModelLoaded && inputText.isNotBlank() && !isPredicting,
             isLoading = isPredicting,
         )
@@ -313,12 +318,15 @@ private fun PredictionCard() {
                 suggestions.forEach { suggestion ->
                     SuggestionChip(
                         onClick = {
-                            inputText = if (inputText.endsWith(" ")) {
+                            val newText = if (inputText.endsWith(" ")) {
                                 "$inputText$suggestion"
                             } else {
                                 "$inputText $suggestion"
                             }
+                            inputText = newText
                             suggestions = emptyList()
+                            // Auto-predict next token
+                            if (isModelLoaded) predictNext(newText)
                         },
                         label = { Text(suggestion) },
                         shape = RoundedCornerShape(8.dp),

@@ -30,3 +30,10 @@ includeBuild(settings.settingsDir.resolve("..").resolve("research/engines/llama.
         substitute(module("com.arm.aichat:lib")).using(project(":lib"))
     }
 }
+
+// Include whisper.cpp Android lib for on-device speech-to-text
+includeBuild(settings.settingsDir.resolve("..").resolve("research/engines/whisper.cpp/examples/whisper.android").canonicalFile) {
+    dependencySubstitution {
+        substitute(module("com.whispercpp:lib")).using(project(":lib"))
+    }
+}

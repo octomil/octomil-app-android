@@ -80,6 +80,7 @@ dependencies {
     implementation("ai.octomil:octomil-client")
     implementation("ai.octomil:octomil-ui")
     implementation("com.arm.aichat:lib")
+    implementation("com.whispercpp:lib")
 
     implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     implementation("androidx.compose.ui:ui")

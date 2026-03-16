@@ -8,6 +8,7 @@ import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.client.OctomilClient
 import android.util.Log
 import ai.octomil.config.OctomilConfig
+import ai.octomil.generated.ModelCapability
 import ai.octomil.discovery.DiscoveryManager
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.services.LocalPairingServer
@@ -50,6 +51,12 @@ class OctomilApplication : Application() {
             val arr = JSONArray(json)
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val caps = mutableListOf<ModelCapability>()
+                obj.optJSONArray("capabilities")?.let { capsArr ->
+                    for (j in 0 until capsArr.length()) {
+                        ModelCapability.fromCode(capsArr.getString(j))?.let { caps.add(it) }
+                    }
+                }
                 pairedModels.add(PairedModel(
                     name = obj.getString("name"),
                     version = obj.getString("version"),
@@ -57,6 +64,7 @@ class OctomilApplication : Application() {
                     sizeString = obj.getString("sizeString"),
                     runtime = obj.getString("runtime"),
                     modality = obj.optString("modality", null),
+                    capabilities = caps,
                 ))
             }
         } catch (_: Exception) { }
@@ -72,6 +80,9 @@ class OctomilApplication : Application() {
                 put("sizeString", m.sizeString)
                 put("runtime", m.runtime)
                 if (m.modality != null) put("modality", m.modality)
+                if (m.capabilities.isNotEmpty()) {
+                    put("capabilities", JSONArray(m.capabilities.map { it.code }))
+                }
             })
         }
         getSharedPreferences("octomil", MODE_PRIVATE)

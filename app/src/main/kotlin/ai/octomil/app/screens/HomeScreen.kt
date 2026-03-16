@@ -201,8 +201,19 @@ fun HomeScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onModelClick(model.name) },
+                        .then(
+                            if (model.isChatModel) {
+                                Modifier.clickable { onModelClick(model.name) }
+                            } else Modifier
+                        ),
                     shape = RoundedCornerShape(16.dp),
+                    colors = if (model.isChatModel) {
+                        CardDefaults.cardColors()
+                    } else {
+                        CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                    },
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -214,7 +225,12 @@ fun HomeScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "v${model.version} \u00B7 ${model.runtime}",
+                            text = buildString {
+                                append("v${model.version} \u00B7 ${model.runtime}")
+                                if (model.capabilities.isNotEmpty()) {
+                                    append(" \u00B7 ${model.capabilities.joinToString(", ") { it.code }}")
+                                }
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

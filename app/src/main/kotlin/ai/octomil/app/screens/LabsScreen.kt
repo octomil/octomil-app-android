@@ -81,29 +81,56 @@ private fun WhisperCard() {
     var whisperRuntime by remember { mutableStateOf<WhisperRuntime?>(null) }
     var status by remember { mutableStateOf("idle") }
     var transcriptionResult by remember { mutableStateOf("") }
-    var capturedSamples by remember { mutableStateOf<FloatArray?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
     var isTranscribing by remember { mutableStateOf(false) }
-    var permissionGranted by remember { mutableStateOf(false) }
 
     val recorder = remember { AudioRecorder() }
     val durationMs by recorder.durationMs.collectAsState()
 
+    // Auto-transcribe after recording stops
+    fun transcribe(samples: FloatArray) {
+        val rt = whisperRuntime ?: return
+        scope.launch {
+            isTranscribing = true
+            status = "transcribing\u2026"
+            withContext(NonCancellable) {
+                try {
+                    val t0 = System.currentTimeMillis()
+                    val result = rt.transcribe(samples)
+                    val elapsed = System.currentTimeMillis() - t0
+                    transcriptionResult = result.trim()
+                    rt.release()
+                    whisperRuntime = null
+                    status = "transcribed (${elapsed}ms), model released"
+                } catch (e: Exception) {
+                    Log.e(TAG, "Transcription failed", e)
+                    status = "transcription failed: ${e.message}"
+                    whisperRuntime?.release()
+                    whisperRuntime = null
+                } finally {
+                    isTranscribing = false
+                }
+            }
+        }
+    }
+
+    fun stopAndTranscribe() {
+        val samples = recorder.stopRecording()
+        isRecording = false
+        status = "recorded ${samples.size} samples (${durationMs}ms)"
+        transcribe(samples)
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        permissionGranted = granted
         if (granted) {
             isRecording = true
             recorder.startRecording()
             scope.launch {
                 delay(3000)
-                if (isRecording) {
-                    capturedSamples = recorder.stopRecording()
-                    isRecording = false
-                    status = "recorded ${capturedSamples!!.size} samples (${durationMs}ms)"
-                }
+                if (isRecording) stopAndTranscribe()
             }
         } else {
             status = "microphone permission denied"
@@ -111,7 +138,6 @@ private fun WhisperCard() {
     }
 
     val isModelLoaded = whisperRuntime != null
-    val hasRecording = capturedSamples != null
 
     LabCard(
         icon = { LabCardIcon(Icons.Outlined.GraphicEq, OctomilColors.Cyan400) },
@@ -147,52 +173,21 @@ private fun WhisperCard() {
             isLoading = isLoading,
         )
 
-        // Record
+        // Record — tap to start, tap again or wait 3s to stop + auto-transcribe
         LabButton(
-            text = if (isRecording) "Stop (${durationMs}ms)" else "Record 3 sec",
+            text = if (isTranscribing) "Transcribing\u2026"
+                   else if (isRecording) "Stop (${durationMs}ms)"
+                   else "Record",
             onClick = {
                 if (isRecording) {
-                    capturedSamples = recorder.stopRecording()
-                    isRecording = false
-                    status = "recorded ${capturedSamples!!.size} samples (${durationMs}ms)"
+                    stopAndTranscribe()
                 } else {
                     permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             },
             enabled = isModelLoaded && !isTranscribing,
-            variant = if (isRecording) LabButtonVariant.Destructive else LabButtonVariant.Secondary,
-        )
-
-        // Transcribe
-        LabButton(
-            text = "Transcribe",
-            onClick = {
-                scope.launch {
-                    isTranscribing = true
-                    status = "transcribing\u2026"
-                    withContext(NonCancellable) {
-                        try {
-                            val t0 = System.currentTimeMillis()
-                            val result = whisperRuntime!!.transcribe(capturedSamples!!)
-                            val elapsed = System.currentTimeMillis() - t0
-                            transcriptionResult = result.trim()
-                            whisperRuntime!!.release()
-                            whisperRuntime = null
-                            capturedSamples = null
-                            status = "transcribed (${elapsed}ms), model released"
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Transcription failed", e)
-                            status = "transcription failed: ${e.message}"
-                            whisperRuntime?.release()
-                            whisperRuntime = null
-                        } finally {
-                            isTranscribing = false
-                        }
-                    }
-                }
-            },
-            enabled = hasRecording && isModelLoaded && !isTranscribing,
             isLoading = isTranscribing,
+            variant = if (isRecording) LabButtonVariant.Destructive else LabButtonVariant.Secondary,
         )
 
         // Result

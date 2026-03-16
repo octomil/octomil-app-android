@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -30,11 +31,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onModelClick: (modelId: String) -> Unit,
 ) {
     val app = OctomilApplication.instance
+    var modelToDelete by remember { mutableStateOf<String?>(null) }
     val isInitialized = OctomilClient.isInitialized()
     val localPort = app.localServer?.port ?: 0
     val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
@@ -113,72 +116,97 @@ fun HomeScreen(
             }
         } else {
             items(app.pairedModels, key = { it.name }) { model ->
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    border = ButtonDefaults.outlinedButtonBorder(enabled = false).copy(
-                        width = 1.dp,
-                        brush = androidx.compose.ui.graphics.SolidColor(
-                            MaterialTheme.colorScheme.outlineVariant,
-                        ),
-                    ),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (model.isChatModel) {
-                                    Modifier.clickable { onModelClick(model.name) }
-                                } else Modifier,
-                            )
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        // Model icon
+                val dismissState = rememberSwipeToDismissBoxState(
+                    confirmValueChange = { value ->
+                        if (value != SwipeToDismissBoxValue.Settled) {
+                            modelToDelete = model.name
+                            false // don't dismiss yet — wait for dialog
+                        } else false
+                    },
+                )
+
+                SwipeToDismissBox(
+                    state = dismissState,
+                    backgroundContent = {
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
-                            contentAlignment = Alignment.Center,
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.errorContainer),
+                            contentAlignment = Alignment.CenterEnd,
                         ) {
                             Icon(
-                                Icons.Outlined.SmartToy,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.primary,
+                                Icons.Default.Delete,
+                                contentDescription = "Remove",
+                                modifier = Modifier.padding(end = 20.dp),
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
-
-                        Spacer(modifier = Modifier.width(14.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = model.name,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                    },
+                    enableDismissFromStartToEnd = false,
+                ) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (model.isChatModel) {
+                                        Modifier.clickable { onModelClick(model.name) }
+                                    } else Modifier,
+                                )
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Model icon
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                SmallChip(text = "v${model.version}")
-                                SmallChip(text = model.runtime)
-                                model.capabilities.forEach { cap ->
-                                    SmallChip(text = cap.code)
+                                Icon(
+                                    Icons.Outlined.SmartToy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = model.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    SmallChip(text = "v${model.version}")
+                                    SmallChip(text = model.runtime)
+                                    model.capabilities.forEach { cap ->
+                                        SmallChip(text = cap.code)
+                                    }
                                 }
                             }
-                        }
 
-                        if (model.isChatModel) {
-                            Icon(
-                                Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            if (model.isChatModel) {
+                                Icon(
+                                    Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -222,6 +250,29 @@ fun HomeScreen(
             }
         }
     }
+
+    // Confirm-delete dialog
+    if (modelToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { modelToDelete = null },
+            title = { Text("Remove model") },
+            text = { Text("Remove ${modelToDelete} from linked models?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        app.removePairedModel(modelToDelete!!)
+                        modelToDelete = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { modelToDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 // ── Components ──
@@ -250,12 +301,7 @@ private fun StatusCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        border = ButtonDefaults.outlinedButtonBorder(enabled = false).copy(
-            width = 1.dp,
-            brush = androidx.compose.ui.graphics.SolidColor(
-                MaterialTheme.colorScheme.outlineVariant,
-            ),
-        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -384,12 +430,7 @@ private fun EmptyModelsCard() {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        border = ButtonDefaults.outlinedButtonBorder(enabled = false).copy(
-            width = 1.dp,
-            brush = androidx.compose.ui.graphics.SolidColor(
-                MaterialTheme.colorScheme.outlineVariant,
-            ),
-        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
             modifier = Modifier

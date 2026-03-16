@@ -5,9 +5,20 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Science
@@ -18,8 +29,12 @@ import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import ai.octomil.app.ui.OctomilColors
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -119,10 +134,61 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                 ) { innerPadding ->
+                    // Chat screen handles its own bottom insets (IME + nav bar),
+                    // so provide a version without bottom padding for that route.
+                    val chatPadding = PaddingValues(
+                        top = innerPadding.calculateTopPadding(),
+                        bottom = 0.dp,
+                    )
+                    val isChatRoute = currentRoute?.startsWith(Routes.CHAT) == true
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                    // Network status indicator — top-right, always visible
+                    run {
+                        val isConnected = rememberNetworkConnectivity()
+
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .statusBarsPadding()
+                                .padding(top = 12.dp, end = 16.dp)
+                                .zIndex(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant,
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isConnected) OctomilColors.Emerald400
+                                            else MaterialTheme.colorScheme.outline,
+                                        ),
+                                )
+                                Icon(
+                                    if (isConnected) Icons.Filled.Wifi else Icons.Filled.WifiOff,
+                                    contentDescription = if (isConnected) "Connected" else "Offline",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = if (isConnected) OctomilColors.Emerald400
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+
                     NavHost(
                         navController = navController,
                         startDestination = Routes.HOME,
-                        modifier = Modifier.padding(innerPadding),
+                        modifier = Modifier.padding(if (isChatRoute) chatPadding else innerPadding),
                     ) {
                         composable(Routes.HOME) {
                             HomeScreen(
@@ -224,6 +290,7 @@ class MainActivity : ComponentActivity() {
                             SettingsScreen()
                         }
                     }
+                    } // Box
                 }
             }
         }
@@ -260,3 +327,50 @@ private data class NavItem(
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val selectedIcon: androidx.compose.ui.graphics.vector.ImageVector,
 )
+
+/** Observe real WiFi connectivity via ConnectivityManager, recomposing on change. */
+@Composable
+private fun rememberNetworkConnectivity(): Boolean {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val connectivityManager = remember {
+        context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    }
+
+    fun checkWifi(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return false
+        val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    var isConnected by remember { mutableStateOf(checkWifi()) }
+
+    DisposableEffect(connectivityManager) {
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        // Use the default callback (all networks) so onLost fires for any change
+        val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                mainHandler.post { isConnected = checkWifi() }
+            }
+
+            override fun onLost(network: android.net.Network) {
+                mainHandler.post { isConnected = checkWifi() }
+            }
+
+            override fun onCapabilitiesChanged(
+                network: android.net.Network,
+                caps: android.net.NetworkCapabilities,
+            ) {
+                mainHandler.post { isConnected = checkWifi() }
+            }
+        }
+
+        // Monitor all networks so we catch WiFi going away
+        val request = android.net.NetworkRequest.Builder().build()
+        connectivityManager.registerNetworkCallback(request, callback)
+
+        onDispose { connectivityManager.unregisterNetworkCallback(callback) }
+    }
+
+    return isConnected
+}

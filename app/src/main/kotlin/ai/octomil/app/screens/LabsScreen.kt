@@ -88,7 +88,6 @@ private fun WhisperCard() {
     val recorder = remember { AudioRecorder() }
     val durationMs by recorder.durationMs.collectAsState()
 
-    // Auto-transcribe after recording stops
     fun transcribe(samples: FloatArray) {
         val rt = whisperRuntime ?: return
         scope.launch {
@@ -102,7 +101,7 @@ private fun WhisperCard() {
                     transcriptionResult = result.trim()
                     rt.release()
                     whisperRuntime = null
-                    status = "transcribed (${elapsed}ms), model released"
+                    status = "transcribed (${elapsed}ms)"
                 } catch (e: Exception) {
                     Log.e(TAG, "Transcription failed", e)
                     status = "transcription failed: ${e.message}"
@@ -118,64 +117,66 @@ private fun WhisperCard() {
     fun stopAndTranscribe() {
         val samples = recorder.stopRecording()
         isRecording = false
-        status = "recorded ${samples.size} samples (${durationMs}ms)"
+        status = "recorded ${samples.size} samples"
         transcribe(samples)
+    }
+
+    fun startRecording() {
+        isRecording = true
+        recorder.startRecording()
+        scope.launch {
+            delay(3000)
+            if (isRecording) stopAndTranscribe()
+        }
+    }
+
+    // Auto-load model then start recording
+    fun loadAndRecord() {
+        scope.launch {
+            if (whisperRuntime == null) {
+                isLoading = true
+                status = "loading whisper-tiny\u2026"
+                try {
+                    val modelsDir = context.filesDir.resolve("octomil_models/whisper-tiny/1.0.0")
+                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
+                        ?: error("Whisper model not found in ${modelsDir.absolutePath}")
+                    val runtime = WhisperRuntime(file)
+                    runtime.loadModel()
+                    whisperRuntime = runtime
+                    status = "loaded"
+                } catch (e: Exception) {
+                    Log.e(TAG, "Whisper load failed", e)
+                    status = "load failed: ${e.message}"
+                    isLoading = false
+                    return@launch
+                }
+                isLoading = false
+            }
+            startRecording()
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            isRecording = true
-            recorder.startRecording()
-            scope.launch {
-                delay(3000)
-                if (isRecording) stopAndTranscribe()
-            }
+            loadAndRecord()
         } else {
             status = "microphone permission denied"
         }
     }
 
-    val isModelLoaded = whisperRuntime != null
+    val isBusy = isLoading || isRecording || isTranscribing
 
     LabCard(
         icon = { LabCardIcon(Icons.Outlined.GraphicEq, OctomilColors.Cyan400) },
         title = "Whisper Transcription",
         status = status,
     ) {
-        // Load model
+        // Single button: Record → Stop → auto-transcribe (auto-loads model on first tap)
         LabButton(
-            text = "Load whisper-tiny",
-            onClick = {
-                scope.launch {
-                    isLoading = true
-                    status = "loading whisper-tiny\u2026"
-                    try {
-                        val t0 = System.currentTimeMillis()
-                        val modelsDir = context.filesDir.resolve("octomil_models/whisper-tiny/1.0.0")
-                        val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
-                            ?: error("Whisper model not found in ${modelsDir.absolutePath}")
-                        val runtime = WhisperRuntime(file)
-                        runtime.loadModel()
-                        whisperRuntime = runtime
-                        val elapsed = System.currentTimeMillis() - t0
-                        status = "loaded (${elapsed}ms)"
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Whisper load failed", e)
-                        status = "load failed: ${e.message}"
-                    } finally {
-                        isLoading = false
-                    }
-                }
-            },
-            enabled = !isModelLoaded && !isLoading,
-            isLoading = isLoading,
-        )
-
-        // Record — tap to start, tap again or wait 3s to stop + auto-transcribe
-        LabButton(
-            text = if (isTranscribing) "Transcribing\u2026"
+            text = if (isLoading) "Loading model\u2026"
+                   else if (isTranscribing) "Transcribing\u2026"
                    else if (isRecording) "Stop (${durationMs}ms)"
                    else "Record",
             onClick = {
@@ -185,9 +186,9 @@ private fun WhisperCard() {
                     permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             },
-            enabled = isModelLoaded && !isTranscribing,
-            isLoading = isTranscribing,
-            variant = if (isRecording) LabButtonVariant.Destructive else LabButtonVariant.Secondary,
+            enabled = !isLoading && !isTranscribing,
+            isLoading = isLoading || isTranscribing,
+            variant = if (isRecording) LabButtonVariant.Destructive else LabButtonVariant.Primary,
         )
 
         // Result
@@ -226,9 +227,28 @@ private fun PredictionCard() {
 
     val isModelLoaded = predictionHandle != null
 
-    // Reusable predict function — called by button and after chip tap
+    // Auto-load model if needed, then predict
     fun predictNext(text: String) {
         scope.launch {
+            if (predictionHandle == null) {
+                isLoading = true
+                status = "loading smollm2-135m\u2026"
+                try {
+                    val eng = AiChat.getInferenceEngine(context)
+                    engine = eng
+                    val modelsDir = context.filesDir.resolve("octomil_models/smollm2-135m/1.0.0")
+                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "gguf" }
+                        ?: error("SmolLM2 model not found in ${modelsDir.absolutePath}")
+                    predictionHandle = eng.loadModelHandle(file.absolutePath)
+                    status = "loaded"
+                } catch (e: Exception) {
+                    Log.e(TAG, "Prediction model load failed", e)
+                    status = "load failed: ${e.message}"
+                    isLoading = false
+                    return@launch
+                }
+                isLoading = false
+            }
             isPredicting = true
             status = "predicting\u2026"
             try {
@@ -264,42 +284,12 @@ private fun PredictionCard() {
             ),
         )
 
-        // Load
+        // Single button: auto-loads model on first tap, then predicts
         LabButton(
-            text = "Load smollm2-135m",
-            onClick = {
-                scope.launch {
-                    isLoading = true
-                    status = "loading smollm2-135m\u2026"
-                    try {
-                        val t0 = System.currentTimeMillis()
-                        val eng = AiChat.getInferenceEngine(context)
-                        engine = eng
-                        val modelsDir = context.filesDir.resolve("octomil_models/smollm2-135m/1.0.0")
-                        val file = modelsDir.listFiles()?.firstOrNull { it.extension == "gguf" }
-                            ?: error("SmolLM2 model not found in ${modelsDir.absolutePath}")
-                        val handle = eng.loadModelHandle(file.absolutePath)
-                        predictionHandle = handle
-                        val elapsed = System.currentTimeMillis() - t0
-                        status = "loaded handle=$handle (${elapsed}ms)"
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Prediction model load failed", e)
-                        status = "load failed: ${e.message}"
-                    } finally {
-                        isLoading = false
-                    }
-                }
-            },
-            enabled = !isModelLoaded && !isLoading,
-            isLoading = isLoading,
-        )
-
-        // Predict
-        LabButton(
-            text = "Predict next",
+            text = if (isLoading) "Loading model\u2026" else "Predict next",
             onClick = { predictNext(inputText) },
-            enabled = isModelLoaded && inputText.isNotBlank() && !isPredicting,
-            isLoading = isPredicting,
+            enabled = inputText.isNotBlank() && !isLoading && !isPredicting,
+            isLoading = isLoading || isPredicting,
         )
 
         // Suggestion chips

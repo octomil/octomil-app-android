@@ -84,14 +84,6 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // Both llama.cpp and whisper.cpp bundle their own ggml + omp libs.
-            // Pick the llama.cpp version (listed first) since it's newer.
-            pickFirsts += listOf(
-                "**/libggml.so",
-                "**/libggml-base.so",
-                "**/libggml-cpu.so",
-                "**/libomp.so",
-            )
         }
     }
 }
@@ -100,7 +92,6 @@ dependencies {
     implementation("ai.octomil:octomil-client")
     implementation("ai.octomil:octomil-ui")
     implementation("com.arm.aichat:lib")
-    implementation("com.whispercpp:lib")
 
     implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     implementation("androidx.compose.ui:ui")

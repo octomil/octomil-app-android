@@ -14,9 +14,10 @@ import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
 import ai.octomil.app.keyboard.PredictionState
 import ai.octomil.app.keyboard.TokenSuggestionFilter
+import ai.octomil.Octomil
 import ai.octomil.app.voice.AudioRecorder
 import ai.octomil.app.voice.VoiceState
-import ai.octomil.app.voice.WhisperRuntime
+import ai.octomil.speech.SpeechSession
 import ai.octomil.runtime.ModelKeepAliveService
 import android.app.Application
 import android.net.Uri
@@ -97,7 +98,7 @@ class ChatViewModel(
     private val recorder = AudioRecorder()
     val recordingDurationMs: StateFlow<Long> = recorder.durationMs
 
-    private var whisperRuntime: WhisperRuntime? = null
+    private var speechSession: SpeechSession? = null
 
     // ── Keyboard Prediction (SmolLM2) ──
 
@@ -366,30 +367,15 @@ class ChatViewModel(
             try {
                 val samples = recorder.stopRecording()
 
-                // Load whisper on demand
-                if (whisperRuntime == null) {
-                    _voiceState.value = VoiceState.LoadingModel
-                    val app = getApplication<OctomilApplication>()
-                    val modelsDir = app.filesDir.resolve("octomil_models/whisper-base/1.0.0")
-                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
-                        ?: error("Whisper model not found in ${modelsDir.absolutePath}")
-                    whisperRuntime = WhisperRuntime(file).also { it.loadModel() }
-                }
-
                 _voiceState.value = VoiceState.Transcribing
-                val text = whisperRuntime!!.transcribe(samples)
 
-                // Unload immediately — free ~148MB native memory
-                whisperRuntime!!.release()
-                whisperRuntime = null
+                // Use Octomil SDK — batch transcription via streaming session
+                val text = Octomil.audio.transcribe("sherpa-zipformer-en-20m", samples)
 
                 _voiceState.value = VoiceState.Idle
                 _transcribedText.value = text.trim()
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription failed", e)
-                // Clean up whisper on error
-                whisperRuntime?.release()
-                whisperRuntime = null
                 _voiceState.value = VoiceState.Error(e.message ?: "Transcription failed")
             }
         }
@@ -497,13 +483,9 @@ class ChatViewModel(
         }
         predictionHandle = null
 
-        // Release whisper if loaded
-        whisperRuntime?.let { runtime ->
-            viewModelScope.launch {
-                try { runtime.release() } catch (_: Exception) {}
-            }
-        }
-        whisperRuntime = null
+        // Release speech session if active
+        speechSession?.release()
+        speechSession = null
 
         // Stop the keep-alive service when leaving chat
         ModelKeepAliveService.stop(getApplication())

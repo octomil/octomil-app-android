@@ -24,16 +24,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import ai.octomil.Octomil
 import ai.octomil.app.keyboard.TokenSuggestionFilter
 import ai.octomil.app.ui.OctomilColors
 import ai.octomil.app.voice.AudioRecorder
-import ai.octomil.app.voice.WhisperRuntime
+import ai.octomil.speech.SpeechSession
 import com.arm.aichat.AiChat
 import com.arm.aichat.InferenceEngine
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 private const val TAG = "LabsScreen"
 
@@ -65,94 +63,72 @@ fun LabsScreen() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(vertical = 12.dp),
         ) {
-            item { WhisperCard() }
+            item { SpeechRecognitionCard() }
             item { PredictionCard() }
         }
     }
 }
 
-// ── Whisper Card ──
+// ── Speech Recognition Card ──
 
 @Composable
-private fun WhisperCard() {
-    val context = LocalContext.current
+private fun SpeechRecognitionCard() {
     val scope = rememberCoroutineScope()
 
-    var whisperRuntime by remember { mutableStateOf<WhisperRuntime?>(null) }
+    var session by remember { mutableStateOf<SpeechSession?>(null) }
     var status by remember { mutableStateOf("idle") }
     var transcriptionResult by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
-    var isTranscribing by remember { mutableStateOf(false) }
 
     val recorder = remember { AudioRecorder() }
     val durationMs by recorder.durationMs.collectAsState()
 
-    fun transcribe(samples: FloatArray) {
-        val rt = whisperRuntime ?: return
+    // Collect live transcript from active session
+    val liveTranscript by session?.transcript?.collectAsState() ?: remember { mutableStateOf("") }
+
+    fun stopRecording() {
+        val currentSession = session ?: return
+        recorder.stopStreaming()
+        isRecording = false
+        status = "finalizing\u2026"
         scope.launch {
-            isTranscribing = true
-            status = "transcribing\u2026"
-            withContext(NonCancellable) {
-                try {
-                    val t0 = System.currentTimeMillis()
-                    val result = rt.transcribe(samples)
-                    val elapsed = System.currentTimeMillis() - t0
-                    transcriptionResult = result.trim()
-                    rt.release()
-                    whisperRuntime = null
-                    status = "transcribed (${elapsed}ms)"
-                } catch (e: Exception) {
-                    Log.e(TAG, "Transcription failed", e)
-                    status = "transcription failed: ${e.message}"
-                    whisperRuntime?.release()
-                    whisperRuntime = null
-                } finally {
-                    isTranscribing = false
-                }
+            try {
+                val t0 = System.currentTimeMillis()
+                val finalText = currentSession.finalize()
+                val elapsed = System.currentTimeMillis() - t0
+                transcriptionResult = finalText
+                status = "done (${elapsed}ms finalize)"
+            } catch (e: Exception) {
+                Log.e(TAG, "Finalize failed", e)
+                status = "finalize failed: ${e.message}"
+            } finally {
+                currentSession.release()
+                session = null
             }
         }
-    }
-
-    fun stopAndTranscribe() {
-        val samples = recorder.stopRecording()
-        isRecording = false
-        status = "recorded ${samples.size} samples"
-        transcribe(samples)
     }
 
     fun startRecording() {
-        isRecording = true
-        recorder.startRecording()
         scope.launch {
-            delay(3000)
-            if (isRecording) stopAndTranscribe()
-        }
-    }
+            isLoading = true
+            status = "loading model\u2026"
+            try {
+                val newSession = Octomil.audio.streamingSession("sherpa-zipformer-en-20m")
+                session = newSession
+                isLoading = false
+                isRecording = true
+                status = "recording\u2026"
+                transcriptionResult = ""
 
-    // Auto-load model then start recording
-    fun loadAndRecord() {
-        scope.launch {
-            if (whisperRuntime == null) {
-                isLoading = true
-                status = "loading whisper-tiny\u2026"
-                try {
-                    val modelsDir = context.filesDir.resolve("octomil_models/whisper-tiny/1.0.0")
-                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
-                        ?: error("Whisper model not found in ${modelsDir.absolutePath}")
-                    val runtime = WhisperRuntime(file)
-                    runtime.loadModel()
-                    whisperRuntime = runtime
-                    status = "loaded"
-                } catch (e: Exception) {
-                    Log.e(TAG, "Whisper load failed", e)
-                    status = "load failed: ${e.message}"
-                    isLoading = false
-                    return@launch
+                recorder.startStreaming { chunk ->
+                    newSession.feed(chunk)
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Speech session failed", e)
+                status = "error: ${e.message}"
                 isLoading = false
             }
-            startRecording()
         }
     }
 
@@ -160,46 +136,43 @@ private fun WhisperCard() {
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            loadAndRecord()
+            startRecording()
         } else {
             status = "microphone permission denied"
         }
     }
 
-    val isBusy = isLoading || isRecording || isTranscribing
-
     LabCard(
         icon = { LabCardIcon(Icons.Outlined.GraphicEq, OctomilColors.Cyan400) },
-        title = "Whisper Transcription",
+        title = "Speech Recognition",
         status = status,
     ) {
-        // Single button: Record → Stop → auto-transcribe (auto-loads model on first tap)
         LabButton(
             text = if (isLoading) "Loading model\u2026"
-                   else if (isTranscribing) "Transcribing\u2026"
                    else if (isRecording) "Stop (${durationMs}ms)"
                    else "Record",
             onClick = {
                 if (isRecording) {
-                    stopAndTranscribe()
+                    stopRecording()
                 } else {
                     permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             },
-            enabled = !isLoading && !isTranscribing,
-            isLoading = isLoading || isTranscribing,
+            enabled = !isLoading,
+            isLoading = isLoading,
             variant = if (isRecording) LabButtonVariant.Destructive else LabButtonVariant.Primary,
         )
 
-        // Result
-        if (transcriptionResult.isNotBlank()) {
+        // Live transcript while recording
+        val displayText = if (isRecording) liveTranscript else transcriptionResult
+        if (displayText.isNotBlank()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
                 Text(
-                    transcriptionResult,
+                    displayText,
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -320,25 +293,6 @@ private fun PredictionCard() {
             }
         }
 
-        // Unload
-        LabButton(
-            text = "Unload",
-            onClick = {
-                scope.launch {
-                    try {
-                        engine!!.unloadHandle(predictionHandle!!)
-                        status = "unloaded handle=$predictionHandle"
-                        predictionHandle = null
-                        suggestions = emptyList()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Unload failed", e)
-                        status = "unload failed: ${e.message}"
-                    }
-                }
-            },
-            enabled = isModelLoaded,
-            variant = LabButtonVariant.Outline,
-        )
     }
 }
 

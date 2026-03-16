@@ -34,9 +34,5 @@ includeBuild(workspaceRoot.resolve("research/engines/llama.cpp/examples/llama.an
     }
 }
 
-// Include whisper.cpp Android lib for on-device speech-to-text
-includeBuild(workspaceRoot.resolve("research/engines/whisper.cpp/examples/whisper.android")) {
-    dependencySubstitution {
-        substitute(module("com.whispercpp:lib")).using(project(":lib"))
-    }
-}
+// whisper.cpp removed — speech-to-text now provided by Octomil SDK
+// via sherpa-onnx streaming recognizer (see octomil-android/settings.gradle.kts)

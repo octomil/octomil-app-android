@@ -1,5 +1,7 @@
 package ai.octomil.app.models
 
+import ai.octomil.generated.ModelCapability
+
 data class PairedModel(
     val name: String,
     val version: String,
@@ -8,7 +10,13 @@ data class PairedModel(
     val runtime: String,
     val tokensPerSecond: Double? = null,
     val modality: String? = null,
-)
+    val capabilities: List<ModelCapability> = emptyList(),
+) {
+    /** Whether this model can be opened in the chat UI. */
+    val isChatModel: Boolean
+        get() = capabilities.isEmpty() ||
+            capabilities.contains(ModelCapability.CHAT)
+}
 
 fun formatBytes(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"

@@ -3,6 +3,7 @@ package ai.octomil.app.screens
 import android.util.Log
 import ai.octomil.app.OctomilApplication
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -75,163 +76,194 @@ fun SettingsScreen() {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Settings") }) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "Settings",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
+            )
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(horizontal = 20.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // API Configuration
-            Text("API Configuration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(4.dp))
 
-            OutlinedTextField(
-                value = deviceToken,
-                onValueChange = { deviceToken = it },
-                label = { Text("API Key") },
-                singleLine = true,
+            // Connection section
+            SettingsSectionHeader("Connection")
+
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-            )
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    OutlinedTextField(
+                        value = deviceToken,
+                        onValueChange = { deviceToken = it },
+                        label = { Text("API Key") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = settingsFieldColors(),
+                    )
 
-            // Org ID is auto-fetched — show read-only when populated
-            if (orgId.isNotBlank()) {
-                OutlinedTextField(
-                    value = orgId,
-                    onValueChange = {},
-                    label = { Text("Organization") },
-                    singleLine = true,
-                    readOnly = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                        disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                    ),
-                )
-            }
+                    if (orgId.isNotBlank()) {
+                        OutlinedTextField(
+                            value = orgId,
+                            onValueChange = {},
+                            label = { Text("Organization") },
+                            singleLine = true,
+                            readOnly = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = settingsFieldColors(),
+                        )
+                    }
 
-            OutlinedTextField(
-                value = serverUrl,
-                onValueChange = { serverUrl = it },
-                label = { Text("Server URL") },
-                placeholder = { Text("https://api.octomil.com/api/v1") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-            )
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = { Text("Server URL") },
+                        placeholder = { Text("https://api.octomil.com/api/v1") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = settingsFieldColors(),
+                    )
 
-            var isSaving by remember { mutableStateOf(false) }
+                    var isSaving by remember { mutableStateOf(false) }
 
-            Button(
-                onClick = {
-                    if (deviceToken.isNotBlank()) {
-                        if (orgId.isNotBlank()) {
-                            app.saveCredentials(deviceToken, orgId, serverUrl.ifBlank { null })
-                            statusMessage = "Client reconfigured"
-                        } else {
-                            // Auto-fetch org ID from server using the API key
-                            isSaving = true
-                            scope.launch {
-                                val (fetchedOrgId, error) = fetchOrgId(
-                                    apiKey = deviceToken,
-                                    serverUrl = serverUrl.ifBlank { "https://api.octomil.com/api/v1" },
-                                )
-                                isSaving = false
-                                if (fetchedOrgId != null) {
-                                    orgId = fetchedOrgId
-                                    app.saveCredentials(deviceToken, fetchedOrgId, serverUrl.ifBlank { null })
-                                    statusMessage = "Connected (org: $fetchedOrgId)"
+                    Button(
+                        onClick = {
+                            if (deviceToken.isNotBlank()) {
+                                if (orgId.isNotBlank()) {
+                                    app.saveCredentials(deviceToken, orgId, serverUrl.ifBlank { null })
+                                    statusMessage = "Client reconfigured"
                                 } else {
-                                    statusMessage = error ?: "Could not fetch org ID"
+                                    isSaving = true
+                                    scope.launch {
+                                        val (fetchedOrgId, error) = fetchOrgId(
+                                            apiKey = deviceToken,
+                                            serverUrl = serverUrl.ifBlank { "https://api.octomil.com/api/v1" },
+                                        )
+                                        isSaving = false
+                                        if (fetchedOrgId != null) {
+                                            orgId = fetchedOrgId
+                                            app.saveCredentials(deviceToken, fetchedOrgId, serverUrl.ifBlank { null })
+                                            statusMessage = "Connected (org: $fetchedOrgId)"
+                                        } else {
+                                            statusMessage = error ?: "Could not fetch org ID"
+                                        }
+                                    }
                                 }
                             }
+                        },
+                        enabled = deviceToken.isNotBlank() && !isSaving,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Connecting\u2026")
+                        } else {
+                            Text("Save & Connect")
                         }
                     }
-                },
-                enabled = deviceToken.isNotBlank() && !isSaving,
+                }
+            }
+
+            // Device section
+            Spacer(modifier = Modifier.height(4.dp))
+            SettingsSectionHeader("Device")
+
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                if (isSaving) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = deviceName,
+                        onValueChange = {
+                            deviceName = it
+                            prefs.edit().putString("device_name", it).apply()
+                        },
+                        label = { Text("Device Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = settingsFieldColors(),
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Connecting...")
-                } else {
-                    Text("Save & Reconnect")
                 }
             }
 
-            HorizontalDivider()
+            // Storage section
+            Spacer(modifier = Modifier.height(4.dp))
+            SettingsSectionHeader("Storage")
 
-            // Device
-            Text("Device", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-
-            OutlinedTextField(
-                value = deviceName,
-                onValueChange = {
-                    deviceName = it
-                    prefs.edit().putString("device_name", it).apply()
-                },
-                label = { Text("Device Name") },
-                singleLine = true,
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-            )
-
-            HorizontalDivider()
-
-            // Cache
-            Text("Cache", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-
-            OutlinedButton(
-                onClick = { showClearCacheDialog = true },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error,
-                ),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Text("Clear Model Cache")
-            }
-
-            HorizontalDivider()
-
-            // Device Info
-            Text("Device Info", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DeviceInfoRow("Chip", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                    DeviceInfoRow("RAM", "${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
-                    DeviceInfoRow("OS", "Android ${android.os.Build.VERSION.RELEASE}")
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedButton(
+                        onClick = { showClearCacheDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f)),
+                    ) {
+                        Text("Clear Model Cache")
+                    }
                 }
             }
 
-            // About
-            HorizontalDivider()
-            Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            // About section
+            Spacer(modifier = Modifier.height(4.dp))
+            SettingsSectionHeader("About")
 
-            Card(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DeviceInfoRow("App Version", "1.0.0")
-                    DeviceInfoRow("Platform", "Android")
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SettingsDetailRow("Version", "1.0.0")
+                    SettingsDetailRow("Chip", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                    SettingsDetailRow("Memory", "${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
+                    SettingsDetailRow("OS", "Android ${android.os.Build.VERSION.RELEASE}")
                 }
             }
 
@@ -241,18 +273,46 @@ fun SettingsScreen() {
 }
 
 @Composable
-private fun DeviceInfoRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+private fun SettingsSectionHeader(title: String) {
+    Text(
+        text = title.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 2.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+private fun SettingsDetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
+@Composable
+private fun settingsFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+    focusedLabelColor = MaterialTheme.colorScheme.primary,
+    unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    cursorColor = MaterialTheme.colorScheme.primary,
+)
+
 /**
  * Fetch org_id from the server using the API key.
- * Calls GET /auth/me which returns the authenticated user's org.
- *
- * Returns Pair(orgId, null) on success, or Pair(null, errorMessage) on failure.
  */
 private suspend fun fetchOrgId(apiKey: String, serverUrl: String): Pair<String?, String?> {
     return withContext(Dispatchers.IO) {
@@ -274,7 +334,7 @@ private suspend fun fetchOrgId(apiKey: String, serverUrl: String): Pair<String?,
                 else null to "Server returned 200 but no org_id in response"
             } else {
                 val errorBody = try { conn.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
-                Log.e("Settings", "/auth/me failed: HTTP $code — $errorBody")
+                Log.e("Settings", "/auth/me failed: HTTP $code \u2014 $errorBody")
                 null to "HTTP $code: ${errorBody ?: conn.responseMessage}"
             }
         } catch (e: Exception) {

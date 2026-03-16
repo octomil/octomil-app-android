@@ -10,16 +10,20 @@ import ai.octomil.config.OctomilConfig
 import ai.octomil.pairing.ui.PairingScreen
 import ai.octomil.pairing.ui.PairingState
 import ai.octomil.pairing.ui.PairingViewModel
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -43,25 +47,18 @@ fun PairScreen(
             if (apiKey.isNotBlank() && orgId.isNotBlank()) {
                 app.saveCredentials(apiKey, orgId, host)
             } else {
-                // Just save the server URL for later — don't try to init client without creds
                 prefs.edit().putString("server_url", host).apply()
             }
         }
     }
 
-    // Track code/host — survives rotation via rememberSaveable
     var activeCode by rememberSaveable { mutableStateOf(initialCode ?: "") }
     var activeHost by rememberSaveable { mutableStateOf(host ?: "https://api.octomil.com") }
     var showScanner by rememberSaveable { mutableStateOf(false) }
 
-    // Update if deep link params change
     LaunchedEffect(initialCode, host) {
-        if (!initialCode.isNullOrBlank()) {
-            activeCode = initialCode
-        }
-        if (!host.isNullOrBlank()) {
-            activeHost = host
-        }
+        if (!initialCode.isNullOrBlank()) activeCode = initialCode
+        if (!host.isNullOrBlank()) activeHost = host
     }
 
     Log.d("PairScreen", "State: activeCode='$activeCode' activeHost='$activeHost' showScanner=$showScanner initialCode=$initialCode host=$host")
@@ -71,17 +68,12 @@ fun PairScreen(
             onCodeScanned = { code, scannedHost ->
                 Log.d("PairScreen", "QR scanned: code='$code' host=$scannedHost")
                 activeCode = code
-                if (!scannedHost.isNullOrBlank()) {
-                    activeHost = scannedHost
-                }
+                if (!scannedHost.isNullOrBlank()) activeHost = scannedHost
                 showScanner = false
             },
             onDismiss = { showScanner = false },
         )
     } else if (activeCode.isNotBlank()) {
-        // Pairing endpoints authenticate via the code in the URL path, not via
-        // bearer token. Use the pairing code as a placeholder token so the
-        // OctomilConfig validation passes even on first launch (no stored creds).
         Log.d("PairScreen", "Creating OctomilConfig for pairing: code='$activeCode' host='$activeHost'")
         val config = try {
             OctomilConfig.Builder()
@@ -99,9 +91,10 @@ fun PairScreen(
         val api = if (config != null) OctomilApiFactory.create(config) else null
 
         if (api == null) {
-            // Config failed — show error instead of crashing
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center,
             ) {
                 Column(
@@ -109,10 +102,24 @@ fun PairScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(32.dp),
                 ) {
-                    Text("Failed to initialize pairing", style = MaterialTheme.typography.titleMedium)
-                    Text("Code: $activeCode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Failed to initialize pairing",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "Code: $activeCode",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace,
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Button(onClick = { activeCode = "" }) { Text("Try Again") }
+                    Button(
+                        onClick = { activeCode = "" },
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text("Try Again")
+                    }
                 }
             }
         } else {
@@ -122,10 +129,9 @@ fun PairScreen(
                     context = context,
                     token = activeCode,
                     host = activeHost,
-                )
+                ),
             )
 
-            // Auto-add model to paired list on success
             val currentState by viewModel.state.collectAsState()
             LaunchedEffect(currentState) {
                 val s = currentState
@@ -138,7 +144,7 @@ fun PairScreen(
                             sizeString = formatBytes(s.sizeBytes),
                             runtime = s.runtime,
                             modality = s.modality,
-                        )
+                        ),
                     )
                 }
             }
@@ -157,51 +163,69 @@ fun PairScreen(
             )
         }
     } else {
-        // No pairing code — show scan prompt with camera button
+        // Empty state — scan prompt
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.surface,
+            color = MaterialTheme.colorScheme.background,
         ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.padding(32.dp),
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Default.QrCodeScanner,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "Ready to Pair",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                )
-                Text(
-                    text = "Scan the QR code from the CLI\nor run octomil deploy <model> --phone",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = { showScanner = true },
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(40.dp),
                 ) {
-                    Icon(
-                        Icons.Default.CameraAlt,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                    // Icon container
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(36.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Ready to Pair",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Scan QR Code")
+                    Text(
+                        text = "Scan the QR code from the CLI\nor deploy a model with --phone",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = { showScanner = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan QR Code")
+                    }
                 }
             }
-        }
         }
     }
 }

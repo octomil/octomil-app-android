@@ -24,15 +24,18 @@ includeBuild("octomil-android") {
     }
 }
 
+// Workspace root (parent of octomil-app-android)
+val workspaceRoot = settings.settingsDir.parentFile
+
 // Include llama.cpp Android lib for on-device LLM inference
-includeBuild(settings.settingsDir.resolve("..").resolve("research/engines/llama.cpp/examples/llama.android").canonicalFile) {
+includeBuild(workspaceRoot.resolve("research/engines/llama.cpp/examples/llama.android")) {
     dependencySubstitution {
         substitute(module("com.arm.aichat:lib")).using(project(":lib"))
     }
 }
 
 // Include whisper.cpp Android lib for on-device speech-to-text
-includeBuild(settings.settingsDir.resolve("..").resolve("research/engines/whisper.cpp/examples/whisper.android").canonicalFile) {
+includeBuild(workspaceRoot.resolve("research/engines/whisper.cpp/examples/whisper.android")) {
     dependencySubstitution {
         substitute(module("com.whispercpp:lib")).using(project(":lib"))
     }

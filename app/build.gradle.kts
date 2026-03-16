@@ -72,6 +72,14 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Both llama.cpp and whisper.cpp bundle their own ggml + omp libs.
+            // Pick the llama.cpp version (listed first) since it's newer.
+            pickFirsts += listOf(
+                "**/libggml.so",
+                "**/libggml-base.so",
+                "**/libggml-cpu.so",
+                "**/libomp.so",
+            )
         }
     }
 }

@@ -155,6 +155,8 @@ class ChatViewModel(
         _streamingText.value = ""
         _uiState.value = UiState.Generating
 
+        val t = ensureThread()
+
         generationJob = viewModelScope.launch {
             try {
                 // --- multimodal attachment handling (suspend) ---
@@ -175,8 +177,6 @@ class ChatViewModel(
                         @OptIn(ExperimentalClassifierApi::class)
                         runtimePrompt = adapter.preparePrompt(parts)
                     } else {
-                        // No classifier available — store the message with
-                        // content parts intact, but tell the user clearly.
                         runtimePrompt = ""
                     }
                 } else {
@@ -185,7 +185,6 @@ class ChatViewModel(
                 }
 
                 // Add user message
-                val t = ensureThread()
                 val userMsg = ThreadMessage(
                     id = "msg_${UUID.randomUUID()}",
                     threadId = t.id,
@@ -289,8 +288,9 @@ class ChatViewModel(
     }
 
     fun attachImage(uri: Uri) {
-        val mediaType = application.contentResolver.getType(uri) ?: "image/jpeg"
-        val displayName = application.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        val app = getApplication<Application>()
+        val mediaType = app.contentResolver.getType(uri) ?: "image/jpeg"
+        val displayName = app.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (nameIndex >= 0) cursor.getString(nameIndex) else null

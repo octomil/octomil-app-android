@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,6 +26,7 @@ import ai.octomil.app.chat.ChatViewModel
 import ai.octomil.app.screens.HomeScreen
 import ai.octomil.app.screens.ModelDetailScreen
 import ai.octomil.app.screens.PairScreen
+import ai.octomil.app.screens.LabsScreen
 import ai.octomil.app.screens.SettingsScreen
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -73,6 +75,16 @@ class MainActivity : ComponentActivity() {
                                 selected = currentRoute?.startsWith(Routes.PAIR) == true,
                                 onClick = {
                                     navController.navigate(Routes.PAIR) {
+                                        launchSingleTop = true
+                                    }
+                                },
+                            )
+                            NavigationBarItem(
+                                icon = { Icon(Icons.Default.Science, contentDescription = "Labs") },
+                                label = { Text("Labs") },
+                                selected = currentRoute == Routes.LABS,
+                                onClick = {
+                                    navController.navigate(Routes.LABS) {
                                         launchSingleTop = true
                                     }
                                 },
@@ -187,6 +199,10 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
+                        composable(Routes.LABS) {
+                            LabsScreen()
+                        }
+
                         composable(Routes.SETTINGS) {
                             SettingsScreen()
                         }
@@ -207,6 +223,7 @@ object Routes {
     const val PAIR = "pair"
     const val MODEL_DETAIL = "model_detail"
     const val CHAT = "chat"
+    const val LABS = "labs"
     const val SETTINGS = "settings"
 }
 

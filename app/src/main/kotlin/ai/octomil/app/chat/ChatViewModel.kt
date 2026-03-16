@@ -15,9 +15,11 @@ import ai.octomil.app.OctomilApplication
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.arm.aichat.ProgressListener
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.Job
@@ -104,6 +106,14 @@ class ChatViewModel(
                         "Re-run: octomil deploy $modelName --phone"
                     )
 
+                // Look for mmproj file alongside model (same dir, *mmproj* pattern)
+                val mmprojFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
+                    f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
+                }
+                if (mmprojFile != null) {
+                    Log.i(TAG, "Found mmproj: ${mmprojFile.name}")
+                }
+
                 _uiState.value = UiState.Loading("Loading model…")
                 val factory = LLMRuntimeRegistry.factory
                     ?: throw IllegalStateException("No LLMRuntime factory registered")
@@ -111,20 +121,16 @@ class ChatViewModel(
                 val llmRuntime = factory(modelFile)
 
                 // Eager load if the runtime supports it.
-                // Show elapsed time so the user knows it's not frozen.
+                // Show progress percentage from native callback.
                 if (llmRuntime is LlamaCppRuntime) {
-                    val timerJob = launch {
-                        var seconds = 0
-                        while (true) {
-                            kotlinx.coroutines.delay(1000)
-                            seconds++
-                            _uiState.value = UiState.Loading("Loading model… ${seconds}s")
-                        }
-                    }
+                    llmRuntime.setProgressListener(ProgressListener { progress ->
+                        val pct = (progress * 100).toInt()
+                        _uiState.value = UiState.Loading("Loading model… $pct%")
+                    })
                     try {
                         llmRuntime.loadModel()
                     } finally {
-                        timerJob.cancel()
+                        llmRuntime.setProgressListener(null)
                     }
                 }
 
@@ -132,7 +138,10 @@ class ChatViewModel(
                 app.cacheRuntime(modelName, llmRuntime)
 
                 _uiState.value = UiState.Ready
-                Log.i(TAG, "Model preloaded: $modelName")
+                Log.i(TAG, "Model preloaded: $modelName" +
+                    if (llmRuntime is LlamaCppRuntime) {
+                        " vision=${llmRuntime.supportsVision()} audio=${llmRuntime.supportsAudio()}"
+                    } else "")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to preload model: ${e::class.simpleName}: ${e.message}", e)
                 _uiState.value = UiState.Error(
@@ -190,11 +199,11 @@ class ChatViewModel(
                 )
                 _messages.value = _messages.value + userMsg
 
-                // Image attached — runtime doesn't support multimodal yet.
-                // Store the message with content parts, respond clearly.
-                // TODO: once InferenceEngine supports multimodal input,
-                //       pass content parts directly to the runtime.
-                if (contentParts?.any { it !is ContentPart.Text } == true) {
+                // Determine if this is a multimodal turn
+                val hasMedia = contentParts?.any { it !is ContentPart.Text } == true
+                val runtimeSupportsMedia = currentRuntime.supportsVision() || currentRuntime.supportsAudio()
+
+                if (hasMedia && !runtimeSupportsMedia) {
                     _messages.value = _messages.value + ThreadMessage(
                         id = "msg_${UUID.randomUUID()}",
                         threadId = t.id,
@@ -208,8 +217,6 @@ class ChatViewModel(
                     return@launch
                 }
 
-                // Send only the latest user message — the engine maintains
-                // its own KV cache for multi-turn conversation context.
                 val config = GenerateConfig(maxTokens = 1024, temperature = 0.7f)
 
                 val startTime = System.nanoTime()
@@ -217,7 +224,25 @@ class ChatViewModel(
                 var tokenCount = 0
                 val buffer = StringBuilder()
 
-                currentRuntime.generate(text, config).collect { token ->
+                val tokenFlow = if (hasMedia && runtimeSupportsMedia) {
+                    // Extract raw media bytes from the first media part
+                    val mediaPart = contentParts!!.first { it !is ContentPart.Text }
+                    val mediaBytes = when (mediaPart) {
+                        is ContentPart.Image -> mediaPart.data?.let { Base64.decode(it, Base64.DEFAULT) }
+                        is ContentPart.Audio -> mediaPart.data?.let { Base64.decode(it, Base64.DEFAULT) }
+                        is ContentPart.Video -> mediaPart.data?.let { Base64.decode(it, Base64.DEFAULT) }
+                        else -> null
+                    } ?: throw IllegalStateException("Media part has no data")
+
+                    // Build prompt with media marker where the image goes
+                    val marker = "<__media__>"
+                    val prompt = if (text.isNotBlank()) "$text\n$marker" else marker
+                    currentRuntime.generateMultimodal(prompt, mediaBytes, config)
+                } else {
+                    currentRuntime.generate(text, config)
+                }
+
+                tokenFlow.collect { token ->
                     if (tokenCount == 0) {
                         ttftNanos = System.nanoTime() - startTime
                     }

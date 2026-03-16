@@ -94,7 +94,11 @@ class OctomilApplication : Application() {
 
         // Register llama.cpp as the LLM runtime for GGUF models
         LLMRuntimeRegistry.factory = { modelFile ->
-            LlamaCppRuntime(modelFile, this)
+            // Look for mmproj file alongside the model
+            val mmprojFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
+                f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
+            }
+            LlamaCppRuntime(modelFile, mmprojFile, this)
         }
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)

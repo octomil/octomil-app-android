@@ -86,10 +86,6 @@ dependencies {
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
-    // TFLite for on-device image classification (optional — classifier only
-    // activates when efficientnet_lite0.tflite is present in assets)
-    implementation("org.tensorflow:tensorflow-lite:2.17.0")
-
     // Coil for async image loading in Compose
     implementation("io.coil-kt:coil-compose:2.7.0")
 

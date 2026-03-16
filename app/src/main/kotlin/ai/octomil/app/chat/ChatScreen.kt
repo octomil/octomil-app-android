@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
@@ -33,8 +34,11 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,11 +51,20 @@ fun ChatScreen(
     val streamingText by viewModel.streamingText.collectAsState()
     val pendingAttachment by viewModel.pendingAttachment.collectAsState()
     val listState = rememberLazyListState()
+    val context = LocalContext.current
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) viewModel.attachImage(uri)
+    }
+
+    // Camera capture
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) cameraUri?.let { viewModel.attachImage(it) }
     }
 
     // Auto-scroll on new messages or streaming text
@@ -151,10 +164,16 @@ fun ChatScreen(
                         onSend = { viewModel.sendMessage(it) },
                         onCancel = { viewModel.cancelGeneration() },
                         pendingAttachment = pendingAttachment,
-                        onAttach = {
+                        onAttachGallery = {
                             imagePickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             )
+                        },
+                        onAttachCamera = {
+                            val photoFile = File.createTempFile("photo_", ".jpg", context.cacheDir)
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+                            cameraUri = uri
+                            cameraLauncher.launch(uri)
                         },
                         onClearAttachment = { viewModel.clearAttachment() },
                     )
@@ -238,7 +257,8 @@ private fun ChatInputBar(
     onSend: (String) -> Unit,
     onCancel: () -> Unit,
     pendingAttachment: LocalAttachment? = null,
-    onAttach: () -> Unit = {},
+    onAttachGallery: () -> Unit = {},
+    onAttachCamera: () -> Unit = {},
     onClearAttachment: () -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
@@ -287,13 +307,16 @@ private fun ChatInputBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
-                    onClick = onAttach,
+                    onClick = onAttachCamera,
                     enabled = !isGenerating,
                 ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "Attach image",
-                    )
+                    Icon(Icons.Default.CameraAlt, contentDescription = "Take photo")
+                }
+                IconButton(
+                    onClick = onAttachGallery,
+                    enabled = !isGenerating,
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Choose from gallery")
                 }
 
                 OutlinedTextField(

@@ -4,14 +4,11 @@ import ai.octomil.ModelResolver
 import ai.octomil.android.AttachmentResolver
 import ai.octomil.android.LocalAttachment
 import ai.octomil.chat.ChatThread
-import ai.octomil.chat.ClassifierFallbackAdapter
 import ai.octomil.chat.ContentPartValidation
-import ai.octomil.chat.ExperimentalClassifierApi
 import ai.octomil.chat.GenerateConfig
 import ai.octomil.chat.GenerationMetrics
 import ai.octomil.chat.LLMRuntime
 import ai.octomil.chat.LLMRuntimeRegistry
-import ai.octomil.chat.MultimodalAdapter
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
@@ -75,14 +72,6 @@ class ChatViewModel(
 
     private val attachmentResolver = AttachmentResolver(application)
 
-    @OptIn(ExperimentalClassifierApi::class)
-    private val multimodalAdapter: MultimodalAdapter? = run {
-        val classifier = ImageClassifier.create(application) ?: return@run null
-        ClassifierFallbackAdapter { base64Data ->
-            classifier.classifyBase64(base64Data)
-        }
-    }
-
     private val _pendingAttachment = MutableStateFlow<LocalAttachment?>(null)
     val pendingAttachment: StateFlow<LocalAttachment?> = _pendingAttachment.asStateFlow()
 
@@ -109,22 +98,34 @@ class ChatViewModel(
                     return@launch
                 }
 
-                _uiState.value = UiState.Loading("Resolving model…")
                 val modelFile = ModelResolver.paired().resolve(app, modelName)
                     ?: throw IllegalStateException(
                         "Model '$modelName' not found on device. " +
                         "Re-run: octomil deploy $modelName --phone"
                     )
 
-                _uiState.value = UiState.Loading("Loading ${modelFile.name}…")
+                _uiState.value = UiState.Loading("Loading model…")
                 val factory = LLMRuntimeRegistry.factory
                     ?: throw IllegalStateException("No LLMRuntime factory registered")
 
                 val llmRuntime = factory(modelFile)
 
-                // Eager load if the runtime supports it
+                // Eager load if the runtime supports it.
+                // Show elapsed time so the user knows it's not frozen.
                 if (llmRuntime is LlamaCppRuntime) {
-                    llmRuntime.loadModel()
+                    val timerJob = launch {
+                        var seconds = 0
+                        while (true) {
+                            kotlinx.coroutines.delay(1000)
+                            seconds++
+                            _uiState.value = UiState.Loading("Loading model… ${seconds}s")
+                        }
+                    }
+                    try {
+                        llmRuntime.loadModel()
+                    } finally {
+                        timerJob.cancel()
+                    }
                 }
 
                 runtime = llmRuntime
@@ -161,7 +162,6 @@ class ChatViewModel(
             try {
                 // --- multimodal attachment handling (suspend) ---
                 val contentParts: List<ContentPart>?
-                val runtimePrompt: String
 
                 if (attachment != null) {
                     val resolvedImage = attachmentResolver.resolve(attachment)
@@ -171,17 +171,8 @@ class ChatViewModel(
                     }
                     ContentPartValidation.validate(parts)
                     contentParts = parts
-
-                    val adapter = multimodalAdapter
-                    if (adapter != null) {
-                        @OptIn(ExperimentalClassifierApi::class)
-                        runtimePrompt = adapter.preparePrompt(parts)
-                    } else {
-                        runtimePrompt = ""
-                    }
                 } else {
                     contentParts = null
-                    runtimePrompt = text
                 }
 
                 // Add user message
@@ -199,8 +190,11 @@ class ChatViewModel(
                 )
                 _messages.value = _messages.value + userMsg
 
-                // Image attached but no vision capability — respond directly
-                if (runtimePrompt.isEmpty()) {
+                // Image attached — runtime doesn't support multimodal yet.
+                // Store the message with content parts, respond clearly.
+                // TODO: once InferenceEngine supports multimodal input,
+                //       pass content parts directly to the runtime.
+                if (contentParts?.any { it !is ContentPart.Text } == true) {
                     _messages.value = _messages.value + ThreadMessage(
                         id = "msg_${UUID.randomUUID()}",
                         threadId = t.id,
@@ -223,7 +217,7 @@ class ChatViewModel(
                 var tokenCount = 0
                 val buffer = StringBuilder()
 
-                currentRuntime.generate(runtimePrompt, config).collect { token ->
+                currentRuntime.generate(text, config).collect { token ->
                     if (tokenCount == 0) {
                         ttftNanos = System.nanoTime() - startTime
                     }

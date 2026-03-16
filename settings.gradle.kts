@@ -34,5 +34,9 @@ includeBuild(workspaceRoot.resolve("research/engines/llama.cpp/examples/llama.an
     }
 }
 
-// whisper.cpp removed — speech-to-text now provided by Octomil SDK
-// via sherpa-onnx streaming recognizer (see octomil-android/settings.gradle.kts)
+// sherpa-onnx Android lib for streaming speech-to-text (used by Octomil SDK)
+includeBuild(workspaceRoot.resolve("research/engines/sherpa-onnx/android/SherpaOnnxAar")) {
+    dependencySubstitution {
+        substitute(module("com.k2fsa.sherpa:onnx")).using(project(":sherpa_onnx"))
+    }
+}

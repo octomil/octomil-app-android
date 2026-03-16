@@ -4,15 +4,22 @@ import ai.octomil.android.LocalAttachment
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,19 +29,19 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import android.net.Uri
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -59,7 +66,6 @@ fun ChatScreen(
         if (uri != null) viewModel.attachImage(uri)
     }
 
-    // Camera capture
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -86,6 +92,7 @@ fun ChatScreen(
                 },
             )
         },
+        containerColor = MaterialTheme.colorScheme.surface,
     ) { padding ->
         Column(
             modifier = Modifier
@@ -99,9 +106,16 @@ fun ChatScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(state.message, style = MaterialTheme.typography.bodyMedium)
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(48.dp),
+                                strokeWidth = 3.dp,
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Text(
+                                state.message,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -116,35 +130,37 @@ fun ChatScreen(
                             modifier = Modifier.padding(32.dp),
                         ) {
                             Text(
-                                "Error",
+                                "Something went wrong",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.error,
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text(state.message, style = MaterialTheme.typography.bodyMedium)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(onClick = onBack) { Text("Go Back") }
+                            Text(
+                                state.message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(modifier = Modifier.height(24.dp))
+                            OutlinedButton(onClick = onBack) { Text("Go back") }
                         }
                     }
                 }
 
                 else -> {
-                    // Chat messages list
+                    // Messages
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 8.dp),
+                            .fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(messages) { message ->
+                        items(messages, key = { it.id }) { message ->
                             ChatBubble(message)
                         }
-                        // Streaming response
                         if (streamingText.isNotEmpty()) {
-                            item {
+                            item(key = "streaming") {
                                 ChatBubble(
                                     ThreadMessage(
                                         id = "msg_streaming",
@@ -158,7 +174,7 @@ fun ChatScreen(
                         }
                     }
 
-                    // Input bar
+                    // Input
                     ChatInputBar(
                         isGenerating = uiState is ChatViewModel.UiState.Generating,
                         onSend = { viewModel.sendMessage(it) },
@@ -171,7 +187,9 @@ fun ChatScreen(
                         },
                         onAttachCamera = {
                             val photoFile = File.createTempFile("photo_", ".jpg", context.cacheDir)
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+                            val uri = FileProvider.getUriForFile(
+                                context, "${context.packageName}.fileprovider", photoFile
+                            )
                             cameraUri = uri
                             cameraLauncher.launch(uri)
                         },
@@ -183,27 +201,32 @@ fun ChatScreen(
     }
 }
 
+// ── Bubbles ──
+
+private val UserBubbleShape = RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp)
+private val AssistantBubbleShape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
+
 @Composable
 private fun ChatBubble(message: ThreadMessage) {
     val isUser = message.role == "user"
-    val alignment = if (isUser) Alignment.End else Alignment.Start
-    val bgColor = if (isUser) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
-    }
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = alignment,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = bgColor,
-            modifier = Modifier.widthIn(max = 300.dp),
+            shape = if (isUser) UserBubbleShape else AssistantBubbleShape,
+            color = if (isUser) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+            modifier = Modifier.widthIn(max = 280.dp),
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                // Render image content parts
+            Column(modifier = Modifier.padding(2.dp)) {
+                // Images
                 message.contentParts?.filterIsInstance<ContentPart.Image>()?.forEach { imagePart ->
                     val imageData = imagePart.data
                     if (imageData != null) {
@@ -219,146 +242,234 @@ private fun ChatBubble(message: ThreadMessage) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(max = 200.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Fit,
+                                    .clip(RoundedCornerShape(18.dp)),
+                                contentScale = ContentScale.Crop,
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
                         }
                     }
                 }
 
-                // Text content
+                // Text
                 val textContent = message.content
                 if (!textContent.isNullOrBlank()) {
                     Text(
                         text = textContent,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (isUser) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }
             }
         }
 
-        // Metrics chip for completed assistant messages
+        // Metrics (subtle, below assistant bubble)
         val m = message.metrics
         if (!isUser && m != null) {
             Text(
-                text = "TTFT ${m.ttftMs}ms · ${String.format("%.1f", m.decodeTokensPerSec)} tok/s · ${m.totalTokens} tokens",
+                text = "${String.format("%.1f", m.decodeTokensPerSec)} tok/s · ${m.totalTokens} tok · ${m.ttftMs}ms TTFT",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp, top = 2.dp),
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
             )
         }
     }
 }
+
+// ── Input Bar ──
 
 @Composable
 private fun ChatInputBar(
     isGenerating: Boolean,
     onSend: (String) -> Unit,
     onCancel: () -> Unit,
-    pendingAttachment: LocalAttachment? = null,
-    onAttachGallery: () -> Unit = {},
-    onAttachCamera: () -> Unit = {},
-    onClearAttachment: () -> Unit = {},
+    pendingAttachment: LocalAttachment?,
+    onAttachGallery: () -> Unit,
+    onAttachCamera: () -> Unit,
+    onClearAttachment: () -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
+    var showAttachOptions by remember { mutableStateOf(false) }
+    val canSend = (text.isNotBlank() || pendingAttachment != null) && !isGenerating
 
-    Surface(
-        tonalElevation = 2.dp,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .imePadding(),
     ) {
-        Column {
-            // Pending attachment chip
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+        // Pending attachment preview
+        AnimatedVisibility(
+            visible = pendingAttachment != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        ) {
             if (pendingAttachment != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                        .padding(start = 16.dp, end = 8.dp, top = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AsyncImage(
-                        model = pendingAttachment.contentUri,
-                        contentDescription = "Pending attachment",
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop,
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Box {
+                        AsyncImage(
+                            model = pendingAttachment.contentUri,
+                            contentDescription = "Pending attachment",
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                            contentScale = ContentScale.Crop,
+                        )
+                        // Dismiss overlay
+                        IconButton(
+                            onClick = onClearAttachment,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 6.dp, y = (-6).dp)
+                                .size(20.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    CircleShape,
+                                ),
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remove",
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = pendingAttachment.displayName ?: "Image",
+                        text = pendingAttachment.displayName ?: "Photo",
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = onClearAttachment) {
-                        Icon(Icons.Default.Close, contentDescription = "Remove attachment")
-                    }
                 }
             }
+        }
 
+        // Attach options row
+        AnimatedVisibility(
+            visible = showAttachOptions,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        ) {
             Row(
                 modifier = Modifier
-                    .padding(8.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                IconButton(
-                    onClick = onAttachCamera,
-                    enabled = !isGenerating,
-                ) {
-                    Icon(Icons.Default.CameraAlt, contentDescription = "Take photo")
-                }
-                IconButton(
-                    onClick = onAttachGallery,
-                    enabled = !isGenerating,
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Choose from gallery")
-                }
-
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            if ((text.isNotBlank() || pendingAttachment != null) && !isGenerating) {
-                                onSend(text)
-                                text = ""
-                            }
-                        },
-                    ),
-                    singleLine = true,
-                    enabled = !isGenerating,
+                AssistChip(
+                    onClick = {
+                        showAttachOptions = false
+                        onAttachCamera()
+                    },
+                    label = { Text("Camera") },
+                    leadingIcon = {
+                        Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
                 )
+                AssistChip(
+                    onClick = {
+                        showAttachOptions = false
+                        onAttachGallery()
+                    },
+                    label = { Text("Gallery") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
+                )
+            }
+        }
 
-                Spacer(modifier = Modifier.width(8.dp))
+        // Main input row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            // Attach toggle
+            IconButton(
+                onClick = { showAttachOptions = !showAttachOptions },
+                enabled = !isGenerating,
+            ) {
+                Icon(
+                    if (showAttachOptions) Icons.Default.Close else Icons.Default.Add,
+                    contentDescription = "Attach",
+                    tint = if (isGenerating) {
+                        MaterialTheme.colorScheme.outline
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
 
-                if (isGenerating) {
-                    IconButton(onClick = onCancel) {
-                        Icon(
-                            Icons.Default.Stop,
-                            contentDescription = "Cancel",
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else {
-                    IconButton(
-                        onClick = {
-                            if (text.isNotBlank() || pendingAttachment != null) {
-                                onSend(text)
-                                text = ""
-                            }
-                        },
-                        enabled = text.isNotBlank() || pendingAttachment != null,
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
-                    }
+            // Text field
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier.weight(1f),
+                placeholder = {
+                    Text(
+                        "Message",
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
+                    onSend = {
+                        if (canSend) {
+                            onSend(text)
+                            text = ""
+                            showAttachOptions = false
+                        }
+                    },
+                ),
+                shape = RoundedCornerShape(24.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                ),
+                maxLines = 4,
+                enabled = !isGenerating,
+            )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Send / Cancel
+            if (isGenerating) {
+                FilledIconButton(
+                    onClick = onCancel,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
+                ) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop")
+                }
+            } else {
+                FilledIconButton(
+                    onClick = {
+                        if (canSend) {
+                            onSend(text)
+                            text = ""
+                            showAttachOptions = false
+                        }
+                    },
+                    enabled = canSend,
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
         }

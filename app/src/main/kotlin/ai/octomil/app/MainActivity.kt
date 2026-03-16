@@ -55,7 +55,8 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
-                        NavigationBar {
+                        // Hide bottom nav on chat screen
+                        if (currentRoute?.startsWith(Routes.CHAT) != true) NavigationBar {
                             NavigationBarItem(
                                 icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                                 label = { Text("Home") },

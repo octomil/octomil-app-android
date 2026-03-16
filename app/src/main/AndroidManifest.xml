@@ -26,6 +26,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Octomil"
+        android:extractNativeLibs="true"
         android:usesCleartextTraffic="true">
 
         <!-- Auto-download Google Code Scanner module at install time -->

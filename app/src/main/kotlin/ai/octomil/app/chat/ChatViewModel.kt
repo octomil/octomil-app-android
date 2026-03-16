@@ -76,8 +76,8 @@ class ChatViewModel(
     private val attachmentResolver = AttachmentResolver(application)
 
     @OptIn(ExperimentalClassifierApi::class)
-    private val multimodalAdapter: MultimodalAdapter = run {
-        val classifier = ImageClassifier(application)
+    private val multimodalAdapter: MultimodalAdapter? = run {
+        val classifier = ImageClassifier.create(application) ?: return@run null
         ClassifierFallbackAdapter { base64Data ->
             classifier.classifyBase64(base64Data)
         }
@@ -169,8 +169,16 @@ class ChatViewModel(
                     }
                     ContentPartValidation.validate(parts)
                     contentParts = parts
-                    @OptIn(ExperimentalClassifierApi::class)
-                    runtimePrompt = multimodalAdapter.preparePrompt(parts)
+
+                    val adapter = multimodalAdapter
+                    if (adapter != null) {
+                        @OptIn(ExperimentalClassifierApi::class)
+                        runtimePrompt = adapter.preparePrompt(parts)
+                    } else {
+                        // No classifier available — store the message with
+                        // content parts intact, but tell the user clearly.
+                        runtimePrompt = ""
+                    }
                 } else {
                     contentParts = null
                     runtimePrompt = text
@@ -191,6 +199,21 @@ class ChatViewModel(
                     createdAt = Instant.now().toString(),
                 )
                 _messages.value = _messages.value + userMsg
+
+                // Image attached but no vision capability — respond directly
+                if (runtimePrompt.isEmpty()) {
+                    _messages.value = _messages.value + ThreadMessage(
+                        id = "msg_${UUID.randomUUID()}",
+                        threadId = t.id,
+                        role = "assistant",
+                        content = "Image understanding isn't available on this build yet. " +
+                            "Your image has been saved with the message — it will be " +
+                            "processed once a vision-capable model is available.",
+                        createdAt = Instant.now().toString(),
+                    )
+                    _uiState.value = UiState.Ready
+                    return@launch
+                }
 
                 // Send only the latest user message — the engine maintains
                 // its own KV cache for multi-turn conversation context.

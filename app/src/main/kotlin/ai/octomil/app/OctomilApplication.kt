@@ -3,8 +3,10 @@ package ai.octomil.app
 import android.app.Application
 import android.os.Build
 import ai.octomil.app.chat.LlamaCppRuntime
+import ai.octomil.chat.LLMRuntime
 import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.client.OctomilClient
+import android.util.Log
 import ai.octomil.config.OctomilConfig
 import ai.octomil.discovery.DiscoveryManager
 import ai.octomil.app.models.PairedModel
@@ -25,6 +27,21 @@ class OctomilApplication : Application() {
     private var discoveryManager: DiscoveryManager? = null
 
     val pairedModels = mutableStateListOf<PairedModel>()
+
+    // Cached runtimes keyed by model name — avoids reloading on every chat navigation
+    private val runtimeCache = mutableMapOf<String, LLMRuntime>()
+
+    fun getCachedRuntime(modelName: String): LLMRuntime? = runtimeCache[modelName]
+
+    fun cacheRuntime(modelName: String, runtime: LLMRuntime) {
+        // Evict previous if different model
+        val existing = runtimeCache[modelName]
+        if (existing != null && existing !== runtime) {
+            Log.i("OctomilApp", "Evicting cached runtime for $modelName")
+            existing.close()
+        }
+        runtimeCache[modelName] = runtime
+    }
 
     private fun loadPairedModels() {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)

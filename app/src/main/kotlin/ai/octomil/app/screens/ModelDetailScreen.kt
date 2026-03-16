@@ -1,7 +1,6 @@
 package ai.octomil.app.screens
 
 import ai.octomil.app.models.PairedModel
-import ai.octomil.tryitout.TryItOutActivity
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -9,14 +8,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun ModelDetailScreen(model: PairedModel) {
-    val context = LocalContext.current
-
+fun ModelDetailScreen(
+    model: PairedModel,
+    onTryModel: (modelName: String) -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -71,17 +70,7 @@ fun ModelDetailScreen(model: PairedModel) {
                     fontWeight = FontWeight.SemiBold,
                 )
                 Button(
-                    onClick = {
-                        val intent = TryItOutActivity.createIntent(
-                            context = context,
-                            modelName = model.name,
-                            modelVersion = model.version,
-                            sizeBytes = model.sizeBytes,
-                            runtime = model.runtime,
-                            modality = model.modality,
-                        )
-                        context.startActivity(intent)
-                    },
+                    onClick = { onTryModel(model.name) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                 ) {

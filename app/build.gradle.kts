@@ -3,16 +3,31 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// KLEIDIAI ARM compatibility: disable KleidiAI kernels for budget ARM SoCs.
+// Re-enable with: ./gradlew assembleDebug -Poctomil.disableKleidiai=false
+val disableKleidiai = providers.gradleProperty("octomil.disableKleidiai")
+    .orElse("true")
+    .get()
+
 android {
     namespace = "ai.octomil.app"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "ai.octomil.app"
-        minSdk = 26
+        minSdk = 33  // llama.cpp native lib requires API 33+
         targetSdk = 36
         versionCode = 14
         versionName = "1.3.4"
+
+        externalNativeBuild {
+            cmake {
+                if (disableKleidiai.toBoolean()) {
+                    val overlay = file("../octomil-android/build-config/arm-compatibility.cmake")
+                    arguments("-C", overlay.absolutePath)
+                }
+            }
+        }
     }
 
     signingConfigs {
@@ -53,11 +68,19 @@ android {
             isReturnDefaultValues = true
         }
     }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
     implementation("ai.octomil:octomil-client")
     implementation("ai.octomil:octomil-ui")
+    implementation("com.arm.aichat:lib")
+    implementation("com.whispercpp:lib")
 
     implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     implementation("androidx.compose.ui:ui")
@@ -78,6 +101,9 @@ dependencies {
     // Google Code Scanner — handles camera internally via Play Services,
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+
+    // Coil for async image loading in Compose
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

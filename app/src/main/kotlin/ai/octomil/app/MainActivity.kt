@@ -4,9 +4,14 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Science
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Science
@@ -14,6 +19,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,12 +34,14 @@ import ai.octomil.app.screens.ModelDetailScreen
 import ai.octomil.app.screens.PairScreen
 import ai.octomil.app.screens.LabsScreen
 import ai.octomil.app.screens.SettingsScreen
+import ai.octomil.app.ui.OctomilTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         // Register for pairing codes received via local HTTP server
@@ -58,47 +66,56 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
                         // Hide bottom nav on chat screen
-                        if (currentRoute?.startsWith(Routes.CHAT) != true) NavigationBar {
-                            NavigationBarItem(
-                                icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                                label = { Text("Home") },
-                                selected = currentRoute == Routes.HOME,
-                                onClick = {
-                                    navController.navigate(Routes.HOME) {
-                                        popUpTo(Routes.HOME) { inclusive = true }
+                        if (currentRoute?.startsWith(Routes.CHAT) != true) {
+                            NavigationBar(
+                                tonalElevation = 0.dp,
+                                containerColor = MaterialTheme.colorScheme.surface,
+                            ) {
+                                val items = listOf(
+                                    NavItem(Routes.HOME, "Home", Icons.Outlined.Home, Icons.Filled.Home),
+                                    NavItem(Routes.PAIR, "Pair", Icons.Outlined.QrCodeScanner, Icons.Filled.QrCodeScanner),
+                                    NavItem(Routes.LABS, "Labs", Icons.Outlined.Science, Icons.Filled.Science),
+                                    NavItem(Routes.SETTINGS, "Settings", Icons.Outlined.Settings, Icons.Filled.Settings),
+                                )
+                                items.forEach { item ->
+                                    val selected = if (item.route == Routes.PAIR) {
+                                        currentRoute?.startsWith(Routes.PAIR) == true
+                                    } else {
+                                        currentRoute == item.route
                                     }
-                                },
-                            )
-                            NavigationBarItem(
-                                icon = { Icon(Icons.Default.QrCodeScanner, contentDescription = "Pair") },
-                                label = { Text("Pair") },
-                                selected = currentRoute?.startsWith(Routes.PAIR) == true,
-                                onClick = {
-                                    navController.navigate(Routes.PAIR) {
-                                        launchSingleTop = true
-                                    }
-                                },
-                            )
-                            NavigationBarItem(
-                                icon = { Icon(Icons.Default.Science, contentDescription = "Labs") },
-                                label = { Text("Labs") },
-                                selected = currentRoute == Routes.LABS,
-                                onClick = {
-                                    navController.navigate(Routes.LABS) {
-                                        launchSingleTop = true
-                                    }
-                                },
-                            )
-                            NavigationBarItem(
-                                icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                                label = { Text("Settings") },
-                                selected = currentRoute == Routes.SETTINGS,
-                                onClick = {
-                                    navController.navigate(Routes.SETTINGS) {
-                                        launchSingleTop = true
-                                    }
-                                },
-                            )
+                                    NavigationBarItem(
+                                        icon = {
+                                            Icon(
+                                                if (selected) item.selectedIcon else item.icon,
+                                                contentDescription = item.label,
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                item.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                            )
+                                        },
+                                        selected = selected,
+                                        onClick = {
+                                            navController.navigate(item.route) {
+                                                if (item.route == Routes.HOME) {
+                                                    popUpTo(Routes.HOME) { inclusive = true }
+                                                } else {
+                                                    launchSingleTop = true
+                                                }
+                                            }
+                                        },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                                        ),
+                                    )
+                                }
+                            }
                         }
                     },
                 ) { innerPadding ->
@@ -237,21 +254,9 @@ class ChatViewModelFactory(
     }
 }
 
-@Composable
-fun OctomilTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = dynamicColorScheme(),
-        typography = Typography(),
-        content = content,
-    )
-}
-
-@Composable
-private fun dynamicColorScheme(): ColorScheme {
-    return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-        val context = androidx.compose.ui.platform.LocalContext.current
-        dynamicLightColorScheme(context)
-    } else {
-        lightColorScheme()
-    }
-}
+private data class NavItem(
+    val route: String,
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val selectedIcon: androidx.compose.ui.graphics.vector.ImageVector,
+)

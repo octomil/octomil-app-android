@@ -12,6 +12,7 @@ import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
+import ai.octomil.runtime.ModelKeepAliveService
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -44,7 +45,7 @@ class ChatViewModel(
     sealed class UiState {
         data class Loading(val message: String = "Loading model…") : UiState()
         object Ready : UiState()
-        object Generating : UiState()
+        data class Generating(val phase: String = "Generating…") : UiState()
         data class Error(val message: String) : UiState()
     }
 
@@ -95,12 +96,13 @@ class ChatViewModel(
                 val cached = app.getCachedRuntime(modelName)
                 if (cached != null) {
                     runtime = cached
+                    ModelKeepAliveService.start(app, modelName)
                     _uiState.value = UiState.Ready
                     Log.i(TAG, "Using cached runtime for: $modelName")
                     return@launch
                 }
 
-                val modelFile = ModelResolver.paired().resolve(app, modelName)
+                var modelFile = ModelResolver.paired().resolve(app, modelName)
                     ?: throw IllegalStateException(
                         "Model '$modelName' not found on device. " +
                         "Re-run: octomil deploy $modelName --phone"
@@ -109,6 +111,15 @@ class ChatViewModel(
                 // Look for mmproj file alongside model (same dir, *mmproj* pattern)
                 val mmprojFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
                     f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
+                }
+
+                // If the resolver returned the mmproj, pick the actual model file instead
+                if (modelFile.name.contains("mmproj", ignoreCase = true)) {
+                    modelFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
+                        f.isFile && !f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
+                    } ?: throw IllegalStateException(
+                        "Model directory only contains mmproj — no main model GGUF found"
+                    )
                 }
                 if (mmprojFile != null) {
                     Log.i(TAG, "Found mmproj: ${mmprojFile.name}")
@@ -137,6 +148,9 @@ class ChatViewModel(
                 runtime = llmRuntime
                 app.cacheRuntime(modelName, llmRuntime)
 
+                // Keep process alive when backgrounded (image picker, camera)
+                ModelKeepAliveService.start(app, modelName)
+
                 _uiState.value = UiState.Ready
                 Log.i(TAG, "Model preloaded: $modelName" +
                     if (llmRuntime is LlamaCppRuntime) {
@@ -163,7 +177,9 @@ class ChatViewModel(
         if (attachment != null) _pendingAttachment.value = null
 
         _streamingText.value = ""
-        _uiState.value = UiState.Generating
+        _uiState.value = UiState.Generating(
+            if (attachment != null) "Processing image…" else "Generating…"
+        )
 
         val t = ensureThread()
 
@@ -173,6 +189,7 @@ class ChatViewModel(
                 val contentParts: List<ContentPart>?
 
                 if (attachment != null) {
+                    _uiState.value = UiState.Generating("Processing image…")
                     val resolvedImage = attachmentResolver.resolve(attachment)
                     val parts = buildList {
                         if (text.isNotBlank()) add(ContentPart.Text(text))
@@ -218,6 +235,7 @@ class ChatViewModel(
                 }
 
                 val config = GenerateConfig(maxTokens = 1024, temperature = 0.7f)
+                _uiState.value = UiState.Generating("Generating response…")
 
                 val startTime = System.nanoTime()
                 var ttftNanos = 0L
@@ -234,9 +252,9 @@ class ChatViewModel(
                         else -> null
                     } ?: throw IllegalStateException("Media part has no data")
 
-                    // Build prompt with media marker where the image goes
+                    // Build prompt with media marker before the text (VLMs expect image first)
                     val marker = "<__media__>"
-                    val prompt = if (text.isNotBlank()) "$text\n$marker" else marker
+                    val prompt = if (text.isNotBlank()) "$marker\n$text" else marker
                     currentRuntime.generateMultimodal(prompt, mediaBytes, config)
                 } else {
                     currentRuntime.generate(text, config)
@@ -333,6 +351,8 @@ class ChatViewModel(
 
     override fun onCleared() {
         cancelGeneration()
+        // Stop the keep-alive service when leaving chat
+        ModelKeepAliveService.stop(getApplication())
         // Don't close the runtime — it's cached in OctomilApplication
         // for instant reuse when navigating back to chat.
         runtime = null

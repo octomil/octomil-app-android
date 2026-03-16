@@ -3,13 +3,22 @@ package ai.octomil.app.chat
 import ai.octomil.android.LocalAttachment
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -73,9 +82,26 @@ fun ChatScreen(
         if (success) cameraUri?.let { viewModel.attachImage(it) }
     }
 
-    // Auto-scroll on new messages or streaming text
-    LaunchedEffect(messages.size, streamingText) {
-        val totalItems = messages.size + (if (streamingText.isNotEmpty()) 1 else 0)
+    // Camera requires runtime permission on Android 6+
+    val launchCamera = {
+        val photoFile = File.createTempFile("photo_", ".jpg", context.cacheDir)
+        val uri = FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", photoFile
+        )
+        cameraUri = uri
+        cameraLauncher.launch(uri)
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) launchCamera()
+    }
+
+    // Auto-scroll on new messages, streaming text, or processing indicator
+    val isGenerating = uiState is ChatViewModel.UiState.Generating
+    LaunchedEffect(messages.size, streamingText, isGenerating) {
+        val hasExtra = streamingText.isNotEmpty() || isGenerating
+        val totalItems = messages.size + (if (hasExtra) 1 else 0)
         if (totalItems > 0) {
             listState.animateScrollToItem(totalItems - 1)
         }
@@ -171,6 +197,12 @@ fun ChatScreen(
                                     ),
                                 )
                             }
+                        } else if (uiState is ChatViewModel.UiState.Generating) {
+                            item(key = "processing") {
+                                ProcessingIndicator(
+                                    phase = (uiState as ChatViewModel.UiState.Generating).phase,
+                                )
+                            }
                         }
                     }
 
@@ -186,12 +218,13 @@ fun ChatScreen(
                             )
                         },
                         onAttachCamera = {
-                            val photoFile = File.createTempFile("photo_", ".jpg", context.cacheDir)
-                            val uri = FileProvider.getUriForFile(
-                                context, "${context.packageName}.fileprovider", photoFile
-                            )
-                            cameraUri = uri
-                            cameraLauncher.launch(uri)
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
+                                == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                launchCamera()
+                            } else {
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
                         },
                         onClearAttachment = { viewModel.clearAttachment() },
                     )
@@ -275,6 +308,65 @@ private fun ChatBubble(message: ThreadMessage) {
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
             )
+        }
+    }
+}
+
+// ── Processing Indicator ──
+
+@Composable
+private fun ProcessingIndicator(phase: String) {
+    val transition = rememberInfiniteTransition(label = "processing")
+    val dot0 by transition.animateFloat(
+        initialValue = 0.2f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween<Float>(600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ), label = "dot0",
+    )
+    val dot1 by transition.animateFloat(
+        initialValue = 0.2f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween<Float>(600, delayMillis = 200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ), label = "dot1",
+    )
+    val dot2 by transition.animateFloat(
+        initialValue = 0.2f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween<Float>(600, delayMillis = 400, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ), label = "dot2",
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Surface(
+            shape = AssistantBubbleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.widthIn(max = 280.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val dotColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    Box(Modifier.size(6.dp).background(dotColor.copy(alpha = dot0), CircleShape))
+                    Box(Modifier.size(6.dp).background(dotColor.copy(alpha = dot1), CircleShape))
+                    Box(Modifier.size(6.dp).background(dotColor.copy(alpha = dot2), CircleShape))
+                }
+                Text(
+                    text = phase,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

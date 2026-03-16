@@ -3,6 +3,7 @@ package ai.octomil.app
 import android.app.Application
 import android.os.Build
 import ai.octomil.app.chat.LlamaCppRuntime
+import ai.octomil.Octomil
 import ai.octomil.chat.LLMRuntime
 import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.client.OctomilClient
@@ -104,6 +105,9 @@ class OctomilApplication : Application() {
             }
             LlamaCppRuntime(modelFile, mmprojFile, this)
         }
+
+        // Initialize Octomil SDK — wires LLM + speech runtime registries
+        Octomil.init(this)
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""

@@ -1,6 +1,8 @@
 package ai.octomil.app.chat
 
 import ai.octomil.android.LocalAttachment
+import ai.octomil.app.keyboard.PredictionState
+import ai.octomil.app.voice.VoiceState
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
 import android.Manifest
@@ -26,6 +28,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -39,6 +42,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -66,6 +70,10 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState()
     val streamingText by viewModel.streamingText.collectAsState()
     val pendingAttachment by viewModel.pendingAttachment.collectAsState()
+    val voiceState by viewModel.voiceState.collectAsState()
+    val recordingDurationMs by viewModel.recordingDurationMs.collectAsState()
+    val transcribedText by viewModel.transcribedText.collectAsState()
+    val predictionState by viewModel.predictionState.collectAsState()
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
@@ -95,6 +103,13 @@ fun ChatScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) launchCamera()
+    }
+
+    // Audio permission for voice recording
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.startRecording()
     }
 
     // Auto-scroll on new messages, streaming text, or processing indicator
@@ -227,6 +242,24 @@ fun ChatScreen(
                             }
                         },
                         onClearAttachment = { viewModel.clearAttachment() },
+                        // Voice
+                        voiceState = voiceState,
+                        recordingDurationMs = recordingDurationMs,
+                        onMicTap = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                                == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                viewModel.startRecording()
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        onStopRecording = { viewModel.stopAndTranscribe() },
+                        transcribedText = transcribedText,
+                        onConsumeTranscription = { viewModel.consumeTranscribedText() },
+                        // Prediction
+                        predictionState = predictionState,
+                        onTextChanged = { viewModel.onTextChanged(it) },
                     )
                 }
             }
@@ -382,10 +415,32 @@ private fun ChatInputBar(
     onAttachGallery: () -> Unit,
     onAttachCamera: () -> Unit,
     onClearAttachment: () -> Unit,
+    // Voice
+    voiceState: VoiceState,
+    recordingDurationMs: Long,
+    onMicTap: () -> Unit,
+    onStopRecording: () -> Unit,
+    transcribedText: String,
+    onConsumeTranscription: () -> Unit,
+    // Prediction
+    predictionState: PredictionState,
+    onTextChanged: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
     var showAttachOptions by remember { mutableStateOf(false) }
     val canSend = (text.isNotBlank() || pendingAttachment != null) && !isGenerating
+
+    val isRecording = voiceState is VoiceState.Recording
+    val isVoiceBusy = voiceState is VoiceState.LoadingModel || voiceState is VoiceState.Transcribing
+
+    // Insert transcribed text into input field
+    LaunchedEffect(transcribedText) {
+        if (transcribedText.isNotBlank()) {
+            text = if (text.isBlank()) transcribedText else "$text $transcribedText"
+            onConsumeTranscription()
+            onTextChanged(text)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -394,6 +449,82 @@ private fun ChatInputBar(
             .imePadding(),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+        // Voice state indicator (loading model / transcribing)
+        AnimatedVisibility(
+            visible = isVoiceBusy,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text(
+                    text = when (voiceState) {
+                        is VoiceState.LoadingModel -> "Loading voice model..."
+                        is VoiceState.Transcribing -> "Transcribing..."
+                        else -> ""
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        // Voice error
+        if (voiceState is VoiceState.Error) {
+            Text(
+                text = voiceState.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+
+        // Prediction chips
+        AnimatedVisibility(
+            visible = predictionState is PredictionState.Ready,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        ) {
+            val suggestions = (predictionState as? PredictionState.Ready)?.suggestions ?: emptyList()
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(suggestions) { word ->
+                    SuggestionChip(
+                        onClick = {
+                            // Append word with space
+                            text = if (text.endsWith(" ") || text.isEmpty()) {
+                                "$text$word "
+                            } else {
+                                "$text $word "
+                            }
+                            onTextChanged(text)
+                        },
+                        label = { Text(word) },
+                    )
+                }
+            }
+        }
+
+        // Prediction loading indicator
+        if (predictionState is PredictionState.Loading) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .height(2.dp),
+            )
+        }
 
         // Pending attachment preview
         AnimatedVisibility(
@@ -494,12 +625,12 @@ private fun ChatInputBar(
             // Attach toggle
             IconButton(
                 onClick = { showAttachOptions = !showAttachOptions },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !isRecording && !isVoiceBusy,
             ) {
                 Icon(
                     if (showAttachOptions) Icons.Default.Close else Icons.Default.Add,
                     contentDescription = "Attach",
-                    tint = if (isGenerating) {
+                    tint = if (isGenerating || isRecording || isVoiceBusy) {
                         MaterialTheme.colorScheme.outline
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -507,40 +638,88 @@ private fun ChatInputBar(
                 )
             }
 
-            // Text field
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier.weight(1f),
-                placeholder = {
-                    Text(
-                        "Message",
-                        color = MaterialTheme.colorScheme.outline,
+            if (isRecording) {
+                // Recording indicator replaces the text field
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(56.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    // Pulsing red dot
+                    val transition = rememberInfiniteTransition(label = "rec")
+                    val alpha by transition.animateFloat(
+                        initialValue = 0.3f, targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween<Float>(500, easing = LinearEasing),
+                            repeatMode = RepeatMode.Reverse,
+                        ), label = "rec_dot",
                     )
-                },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (canSend) {
-                            onSend(text)
-                            text = ""
-                            showAttachOptions = false
-                        }
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .background(Color.Red.copy(alpha = alpha), CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val secs = recordingDurationMs / 1000
+                    val tenths = (recordingDurationMs % 1000) / 100
+                    Text(
+                        text = "Recording ${secs}.${tenths}s",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            } else {
+                // Text field
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        onTextChanged(it)
                     },
-                ),
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                ),
-                maxLines = 4,
-                enabled = !isGenerating,
-            )
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            "Message",
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (canSend) {
+                                onSend(text)
+                                text = ""
+                                showAttachOptions = false
+                            }
+                        },
+                    ),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    ),
+                    maxLines = 4,
+                    enabled = !isGenerating && !isVoiceBusy,
+                )
+            }
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Send / Cancel
-            if (isGenerating) {
+            // Mic / Stop recording / Send / Cancel
+            if (isRecording) {
+                // Stop recording button
+                FilledIconButton(
+                    onClick = onStopRecording,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
+                ) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop recording")
+                }
+            } else if (isGenerating) {
                 FilledIconButton(
                     onClick = onCancel,
                     colors = IconButtonDefaults.filledIconButtonColors(
@@ -548,20 +727,33 @@ private fun ChatInputBar(
                         contentColor = MaterialTheme.colorScheme.onErrorContainer,
                     ),
                 ) {
-                    Icon(Icons.Default.Stop, contentDescription = "Stop")
+                    Icon(Icons.Default.Stop, contentDescription = "Stop generation")
                 }
-            } else {
+            } else if (canSend) {
                 FilledIconButton(
                     onClick = {
-                        if (canSend) {
-                            onSend(text)
-                            text = ""
-                            showAttachOptions = false
-                        }
+                        onSend(text)
+                        text = ""
+                        showAttachOptions = false
                     },
-                    enabled = canSend,
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                }
+            } else {
+                // Mic button (shown when text field is empty and not generating)
+                IconButton(
+                    onClick = onMicTap,
+                    enabled = !isVoiceBusy,
+                ) {
+                    Icon(
+                        Icons.Default.Mic,
+                        contentDescription = "Voice input",
+                        tint = if (isVoiceBusy) {
+                            MaterialTheme.colorScheme.outline
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
                 }
             }
         }

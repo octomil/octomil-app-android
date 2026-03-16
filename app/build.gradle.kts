@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// KLEIDIAI ARM compatibility: disable KleidiAI kernels for budget ARM SoCs.
+// Re-enable with: ./gradlew assembleDebug -Poctomil.disableKleidiai=false
+val disableKleidiai = providers.gradleProperty("octomil.disableKleidiai")
+    .orElse("true")
+    .get()
+
 android {
     namespace = "ai.octomil.app"
     compileSdk = 36
@@ -13,6 +19,15 @@ android {
         targetSdk = 36
         versionCode = 14
         versionName = "1.3.4"
+
+        externalNativeBuild {
+            cmake {
+                if (disableKleidiai.toBoolean()) {
+                    val overlay = file("../octomil-android/build-config/arm-compatibility.cmake")
+                    arguments("-C", overlay.absolutePath)
+                }
+            }
+        }
     }
 
     signingConfigs {

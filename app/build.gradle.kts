@@ -115,6 +115,9 @@ dependencies {
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
+    // llama.cpp inference engine (bridged via LlamaCppRuntime)
+    implementation("com.arm.aichat:lib")
+
     // whisper.cpp for batch speech-to-text
     implementation("com.whispercpp:lib")
 

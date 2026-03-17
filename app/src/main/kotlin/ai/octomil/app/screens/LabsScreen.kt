@@ -105,9 +105,13 @@ private fun SpeechRecognitionCard() {
     }
 
     fun stopRecording() {
-        if (!hasSession) return
         recorder.stopStreaming()
         isRecording = false
+        if (!hasSession) {
+            status = "idle"
+            isLoading = false
+            return
+        }
         status = "finalizing\u2026"
         scope.launch {
             try {
@@ -131,22 +135,43 @@ private fun SpeechRecognitionCard() {
     fun startRecording() {
         scope.launch {
             isLoading = true
+            isRecording = true
             status = "loading $selectedModel\u2026"
+            transcriptionResult = ""
+
+            // Start recording immediately — buffer chunks while model loads
+            val pendingChunks = mutableListOf<FloatArray>()
+            val sessionReady = java.util.concurrent.atomic.AtomicBoolean(false)
+
+            recorder.startStreaming { chunk ->
+                if (sessionReady.get()) {
+                    speechClient.feed(chunk)
+                } else {
+                    synchronized(pendingChunks) { pendingChunks.add(chunk) }
+                }
+            }
+
             try {
                 speechClient.createSession(selectedModel)
                 hasSession = true
-                isLoading = false
-                isRecording = true
-                status = "recording ($selectedModel)\u2026"
-                transcriptionResult = ""
 
-                recorder.startStreaming { chunk ->
-                    speechClient.feed(chunk)
+                // Flush buffered audio that arrived during model load
+                synchronized(pendingChunks) {
+                    for (chunk in pendingChunks) {
+                        speechClient.feed(chunk)
+                    }
+                    pendingChunks.clear()
+                    sessionReady.set(true)
                 }
+
+                isLoading = false
+                status = "recording ($selectedModel)\u2026"
             } catch (e: Exception) {
                 Log.e(TAG, "Speech session failed", e)
+                recorder.stopStreaming()
                 status = "error: ${e.message}"
                 isLoading = false
+                isRecording = false
             }
         }
     }

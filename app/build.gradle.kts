@@ -3,31 +3,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// KLEIDIAI ARM compatibility: disable KleidiAI kernels for budget ARM SoCs.
-// Re-enable with: ./gradlew assembleDebug -Poctomil.disableKleidiai=false
-val disableKleidiai = providers.gradleProperty("octomil.disableKleidiai")
-    .orElse("true")
-    .get()
-
 android {
     namespace = "ai.octomil.app"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "ai.octomil.app"
-        minSdk = 33  // llama.cpp native lib requires API 33+
+        minSdk = 33
         targetSdk = 36
         versionCode = 14
         versionName = "1.3.4"
-
-        externalNativeBuild {
-            cmake {
-                if (disableKleidiai.toBoolean()) {
-                    val overlay = file("../octomil-android/build-config/arm-compatibility.cmake")
-                    arguments("-C", overlay.absolutePath)
-                }
-            }
-        }
     }
 
     signingConfigs {
@@ -85,8 +70,6 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // Both llama.cpp and whisper.cpp ship libomp.so — keep first
-            pickFirsts += "lib/arm64-v8a/libomp.so"
         }
     }
 }
@@ -115,11 +98,8 @@ dependencies {
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 
-    // llama.cpp inference engine (bridged via LlamaCppRuntime)
-    implementation("com.arm.aichat:lib")
-
-    // whisper.cpp for batch speech-to-text
-    implementation("com.whispercpp:lib")
+    // Engine runtimes (llama.cpp, sherpa-onnx) arrive transitively
+    // through ai.octomil:octomil-client — no direct engine dependencies needed.
 
     // Coil for async image loading in Compose
     implementation("io.coil-kt:coil-compose:2.7.0")

@@ -3,8 +3,6 @@ package ai.octomil.app
 import android.app.Application
 import android.os.Build
 import ai.octomil.Octomil
-import ai.octomil.chat.LLMRuntime
-import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.client.OctomilClient
 import android.util.Log
 import ai.octomil.config.OctomilConfig
@@ -14,7 +12,6 @@ import ai.octomil.discovery.DiscoveryManager
 import ai.octomil.manifest.AppManifest
 import ai.octomil.manifest.AppModelEntry
 import ai.octomil.app.models.PairedModel
-import ai.octomil.app.runtime.LlamaCppRuntime
 import ai.octomil.app.services.LocalPairingServer
 import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.CoroutineScope
@@ -37,21 +34,6 @@ class OctomilApplication : Application() {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val pairedModels = mutableStateListOf<PairedModel>()
-
-    // Cached runtimes keyed by model name — avoids reloading on every chat navigation
-    private val runtimeCache = mutableMapOf<String, LLMRuntime>()
-
-    fun getCachedRuntime(modelName: String): LLMRuntime? = runtimeCache[modelName]
-
-    fun cacheRuntime(modelName: String, runtime: LLMRuntime) {
-        // Evict previous if different model
-        val existing = runtimeCache[modelName]
-        if (existing != null && existing !== runtime) {
-            Log.i("OctomilApp", "Evicting cached runtime for $modelName")
-            existing.close()
-        }
-        runtimeCache[modelName] = runtime
-    }
 
     private fun loadPairedModels() {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
@@ -131,10 +113,7 @@ class OctomilApplication : Application() {
             Log.e("OctomilApp", "Failed to pre-load sherpa-onnx-jni", e)
         }
 
-        // Wire llama.cpp as the LLM runtime before SDK init
-        LLMRuntimeRegistry.factory = LlamaCppRuntime.factory(this)
-
-        // Synchronous init — wires ModelRuntimeRegistry so chat/predictions work immediately
+        // Synchronous init — SDK wires all runtimes (llama.cpp, sherpa-onnx) internally
         Octomil.init(this)
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)

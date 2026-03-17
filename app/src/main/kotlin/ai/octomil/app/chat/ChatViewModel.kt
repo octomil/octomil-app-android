@@ -1,23 +1,21 @@
 package ai.octomil.app.chat
 
-import ai.octomil.ModelResolver
+import ai.octomil.Octomil
 import ai.octomil.android.AttachmentResolver
 import ai.octomil.android.LocalAttachment
-import ai.octomil.chat.ChatThread
-import ai.octomil.chat.ContentPartValidation
-import ai.octomil.chat.GenerateConfig
-import ai.octomil.chat.GenerationMetrics
-import ai.octomil.chat.LLMRuntime
-import ai.octomil.chat.LLMRuntimeRegistry
-import ai.octomil.chat.ThreadMessage
-import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
-import ai.octomil.Octomil
 import ai.octomil.app.keyboard.PredictionState
 import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.voice.AudioRecorder
 import ai.octomil.app.voice.VoiceState
+import ai.octomil.chat.ChatThread
+import ai.octomil.chat.GenerationMetrics
+import ai.octomil.chat.ThreadMessage
 import ai.octomil.manifest.ModelRef
+import ai.octomil.responses.ContentPart
+import ai.octomil.responses.InputItem
+import ai.octomil.responses.ResponseRequest
+import ai.octomil.responses.ResponseStreamEvent
 import ai.octomil.runtime.ModelKeepAliveService
 import ai.octomil.text.TextPredictionRequest
 import android.app.Application
@@ -41,8 +39,8 @@ import kotlinx.coroutines.withContext
 /**
  * ViewModel for the chat screen — manages LLM lifecycle and streaming generation.
  *
- * Preloads the model eagerly on construction so TTFT is minimised.
- * Tracks generation metrics: TTFT, decode tok/s, total latency.
+ * Uses [Octomil.responses] for all inference. The SDK owns runtime creation,
+ * model loading, and caching internally — no engine-specific code here.
  */
 class ChatViewModel(
     application: Application,
@@ -87,7 +85,7 @@ class ChatViewModel(
     private val _pendingAttachment = MutableStateFlow<LocalAttachment?>(null)
     val pendingAttachment: StateFlow<LocalAttachment?> = _pendingAttachment.asStateFlow()
 
-    // ── Voice (Whisper) ──
+    // ── Voice (Speech-to-Text) ──
 
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
@@ -109,77 +107,41 @@ class ChatViewModel(
 
     // ── Internal ──
 
-    private var runtime: LLMRuntime? = null
     private var generationJob: Job? = null
+    private var previousResponseId: String? = null
+    private var modelReady = false
 
     init {
         preload()
     }
 
+    /**
+     * Warm up the model by triggering runtime resolution and model loading
+     * through [Octomil.responses]. The SDK creates, loads, and caches the
+     * runtime internally — no engine objects in app code.
+     */
     private fun preload() {
         viewModelScope.launch {
             try {
-                val app = getApplication<OctomilApplication>()
-
-                // Check if we already have a loaded runtime for this model
-                val cached = app.getCachedRuntime(modelName)
-                if (cached != null) {
-                    runtime = cached
-                    ModelKeepAliveService.start(app, modelName)
-                    _uiState.value = UiState.Ready
-                    Log.i(TAG, "Using cached runtime for: $modelName")
-                    return@launch
-                }
-
-                var modelFile = ModelResolver.paired().resolve(app, modelName)
-                    ?: throw IllegalStateException(
-                        "Model '$modelName' not found on device. " +
-                        "Re-run: octomil deploy $modelName --phone"
-                    )
-
-                // Look for mmproj file alongside model (same dir, *mmproj* pattern)
-                val mmprojFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
-                    f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
-                }
-
-                // If the resolver returned the mmproj, pick the actual model file instead
-                if (modelFile.name.contains("mmproj", ignoreCase = true)) {
-                    modelFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
-                        f.isFile && !f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
-                    } ?: throw IllegalStateException(
-                        "Model directory only contains mmproj — no main model GGUF found"
-                    )
-                }
-                if (mmprojFile != null) {
-                    Log.i(TAG, "Found mmproj: ${mmprojFile.name}")
-                }
-
                 _uiState.value = UiState.Loading("Loading model…")
-                val factory = LLMRuntimeRegistry.factory
-                    ?: throw IllegalStateException("No LLMRuntime factory registered")
 
-                val llmRuntime = factory(modelFile)
+                // Trigger model loading via a minimal inference call.
+                // The SDK resolves the model file, creates the LlamaCppRuntime,
+                // and loads weights. Subsequent calls reuse the cached runtime.
+                val warmupRequest = ResponseRequest(
+                    model = modelName,
+                    input = listOf(InputItem.text("hi")),
+                    maxOutputTokens = 1,
+                )
+                Octomil.responses.create(warmupRequest)
+                modelReady = true
 
-                // Eager load with progress callback via generic LLMRuntime API.
-                llmRuntime.setLoadProgressListener { progress ->
-                    val pct = (progress * 100).toInt()
-                    _uiState.value = UiState.Loading("Loading model… $pct%")
-                }
-                try {
-                    llmRuntime.load()
-                } finally {
-                    llmRuntime.setLoadProgressListener(null)
-                }
-
-                runtime = llmRuntime
-                app.cacheRuntime(modelName, llmRuntime)
-
-                // Keep process alive when backgrounded (image picker, camera)
-                ModelKeepAliveService.start(app, modelName)
-
+                ModelKeepAliveService.start(
+                    getApplication<OctomilApplication>(),
+                    modelName,
+                )
                 _uiState.value = UiState.Ready
-                Log.i(TAG, "Model preloaded: $modelName" +
-                    " vision=${llmRuntime.supportsVision()} audio=${llmRuntime.supportsAudio()}")
+                Log.i(TAG, "Model preloaded: $modelName")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to preload model: ${e::class.simpleName}: ${e.message}", e)
                 _uiState.value = UiState.Error(
@@ -191,7 +153,6 @@ class ChatViewModel(
 
     fun sendMessage(text: String) {
         if (text.isBlank() && _pendingAttachment.value == null) return
-        val currentRuntime = runtime ?: return
 
         // Cancel any active generation
         cancelGeneration()
@@ -209,88 +170,61 @@ class ChatViewModel(
 
         generationJob = viewModelScope.launch {
             try {
-                // --- multimodal attachment handling (suspend) ---
-                val contentParts: List<ContentPart>?
+                // --- build input items ---
+                val inputItems = mutableListOf<InputItem>()
 
                 if (attachment != null) {
                     _uiState.value = UiState.Generating("Processing image…")
                     val resolvedImage = attachmentResolver.resolve(attachment)
-                    val parts = buildList {
+                    val parts = buildList<ContentPart> {
+                        if (resolvedImage is ContentPart.Image) add(resolvedImage)
                         if (text.isNotBlank()) add(ContentPart.Text(text))
-                        add(resolvedImage)
                     }
-                    ContentPartValidation.validate(parts)
-                    contentParts = parts
+                    inputItems.add(InputItem.User(parts))
                 } else {
-                    contentParts = null
+                    inputItems.add(InputItem.text(text))
                 }
 
-                // Add user message
+                // Add user message to chat history
                 val userMsg = ThreadMessage(
                     id = "msg_${UUID.randomUUID()}",
                     threadId = t.id,
                     role = "user",
-                    content = if (contentParts != null) {
-                        ContentPartValidation.deriveContent(contentParts) ?: text
-                    } else {
-                        text
-                    },
-                    contentParts = contentParts,
+                    content = text,
                     createdAt = Instant.now().toString(),
                 )
                 _messages.value = _messages.value + userMsg
 
-                // Determine if this is a multimodal turn
-                val hasMedia = contentParts?.any { it !is ContentPart.Text } == true
-                val runtimeSupportsMedia = currentRuntime.supportsVision() || currentRuntime.supportsAudio()
-
-                if (hasMedia && !runtimeSupportsMedia) {
-                    _messages.value = _messages.value + ThreadMessage(
-                        id = "msg_${UUID.randomUUID()}",
-                        threadId = t.id,
-                        role = "assistant",
-                        content = "Image understanding isn't available on this build yet. " +
-                            "Your image has been saved with the message — it will be " +
-                            "processed once a vision-capable model is available.",
-                        createdAt = Instant.now().toString(),
-                    )
-                    _uiState.value = UiState.Ready
-                    return@launch
-                }
-
-                val config = GenerateConfig(maxTokens = 1024, temperature = 0.7f)
                 _uiState.value = UiState.Generating("Generating response…")
+
+                val request = ResponseRequest(
+                    model = modelName,
+                    input = inputItems,
+                    maxOutputTokens = 1024,
+                    temperature = 0.7f,
+                    previousResponseId = previousResponseId,
+                )
 
                 val startTime = System.nanoTime()
                 var ttftNanos = 0L
                 var tokenCount = 0
                 val buffer = StringBuilder()
 
-                val tokenFlow = if (hasMedia && runtimeSupportsMedia) {
-                    // Extract raw media bytes from the first media part
-                    val mediaPart = contentParts!!.first { it !is ContentPart.Text }
-                    val mediaBytes = when (mediaPart) {
-                        is ContentPart.Image -> mediaPart.data?.let { Base64.decode(it, Base64.DEFAULT) }
-                        is ContentPart.Audio -> mediaPart.data?.let { Base64.decode(it, Base64.DEFAULT) }
-                        is ContentPart.Video -> mediaPart.data?.let { Base64.decode(it, Base64.DEFAULT) }
-                        else -> null
-                    } ?: throw IllegalStateException("Media part has no data")
-
-                    // Build prompt with media marker before the text (VLMs expect image first)
-                    val marker = "<__media__>"
-                    val prompt = if (text.isNotBlank()) "$marker\n$text" else marker
-                    currentRuntime.generateMultimodal(prompt, mediaBytes, config)
-                } else {
-                    currentRuntime.generate(text, config)
-                }
-
-                tokenFlow.collect { token ->
-                    if (tokenCount == 0) {
-                        ttftNanos = System.nanoTime() - startTime
+                Octomil.responses.stream(request).collect { event ->
+                    when (event) {
+                        is ResponseStreamEvent.TextDelta -> {
+                            if (tokenCount == 0) {
+                                ttftNanos = System.nanoTime() - startTime
+                            }
+                            tokenCount++
+                            buffer.append(event.delta)
+                            _streamingText.value = buffer.toString()
+                        }
+                        is ResponseStreamEvent.Done -> {
+                            previousResponseId = event.response.id
+                        }
+                        else -> { /* tool calls, errors */ }
                     }
-                    tokenCount++
-                    buffer.append(token)
-                    _streamingText.value = buffer.toString()
                 }
 
                 val totalNanos = System.nanoTime() - startTime
@@ -453,9 +387,6 @@ class ChatViewModel(
 
         // Stop the keep-alive service when leaving chat
         ModelKeepAliveService.stop(getApplication())
-        // Don't close the runtime — it's cached in OctomilApplication
-        // for instant reuse when navigating back to chat.
-        runtime = null
         super.onCleared()
     }
 

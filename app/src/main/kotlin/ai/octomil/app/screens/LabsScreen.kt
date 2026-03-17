@@ -69,6 +69,11 @@ fun LabsScreen() {
 
 // ── Speech Recognition Card ──
 
+private val SPEECH_MODELS = listOf(
+    "sherpa-zipformer-en-20m" to "Zipformer 20M",
+    "whispernet" to "WhisperNet",
+)
+
 @Composable
 private fun SpeechRecognitionCard() {
     val context = LocalContext.current
@@ -76,6 +81,7 @@ private fun SpeechRecognitionCard() {
 
     val speechClient = remember { SpeechServiceClient(context) }
     var hasSession by remember { mutableStateOf(false) }
+    var selectedModel by remember { mutableStateOf(SPEECH_MODELS[0].first) }
     var status by remember { mutableStateOf("idle") }
     var transcriptionResult by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
@@ -125,13 +131,13 @@ private fun SpeechRecognitionCard() {
     fun startRecording() {
         scope.launch {
             isLoading = true
-            status = "loading model\u2026"
+            status = "loading $selectedModel\u2026"
             try {
-                speechClient.createSession("sherpa-zipformer-en-20m")
+                speechClient.createSession(selectedModel)
                 hasSession = true
                 isLoading = false
                 isRecording = true
-                status = "recording\u2026"
+                status = "recording ($selectedModel)\u2026"
                 transcriptionResult = ""
 
                 recorder.startStreaming { chunk ->
@@ -160,6 +166,23 @@ private fun SpeechRecognitionCard() {
         title = "Speech Recognition",
         status = status,
     ) {
+        // Model selector
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SPEECH_MODELS.forEach { (modelId, label) ->
+                FilterChip(
+                    selected = selectedModel == modelId,
+                    onClick = { if (!isRecording && !isLoading) selectedModel = modelId },
+                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = !isRecording && !isLoading,
+                )
+            }
+        }
+
         LabButton(
             text = if (isLoading) "Loading model\u2026"
                    else if (isRecording) "Stop (${durationMs}ms)"

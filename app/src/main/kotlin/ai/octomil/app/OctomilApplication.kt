@@ -91,9 +91,26 @@ class OctomilApplication : Application() {
     /** Callback invoked when a pairing code arrives via the local HTTP server. */
     var onPairingCodeReceived: ((code: String, host: String?, modelName: String?) -> Unit)? = null
 
+    /** True when running in the `:speech` child process (ORT isolation). */
+    private val isSpeechProcess: Boolean by lazy {
+        val pid = android.os.Process.myPid()
+        val procName = try {
+            java.io.File("/proc/$pid/cmdline").readText().trim('\u0000')
+        } catch (_: Exception) { "" }
+        procName.endsWith(":speech")
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // The :speech process only needs Octomil.init() for speech runtime —
+        // skip everything else (server, client, llama.cpp, mDNS).
+        if (isSpeechProcess) {
+            Log.i("OctomilApp", "Speech process — minimal init")
+            Octomil.init(this)
+            return
+        }
 
         // Eagerly load sherpa-onnx native library BEFORE HWUI render threads
         // are fully active. This isolates JNI_OnLoad from UI rendering.

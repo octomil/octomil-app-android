@@ -1,7 +1,9 @@
 package ai.octomil.app
 
+import ai.octomil.Octomil
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -50,10 +54,14 @@ import ai.octomil.app.screens.PairScreen
 import ai.octomil.app.screens.LabsScreen
 import ai.octomil.app.screens.SettingsScreen
 import ai.octomil.app.ui.OctomilTheme
+import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.net.URLEncoder
 
 class MainActivity : ComponentActivity() {
+
+    // Auto-test disabled — ORT model loading crashes Samsung HWUI.
+    // Speech will use separate process (SpeechService with android:process=":speech").
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -76,28 +84,40 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
+                val coroutineScope = rememberCoroutineScope()
+
+                // Deep-link params for Pair screen
+                var pendingPairCode by remember { mutableStateOf<String?>(null) }
+                var pendingPairHost by remember { mutableStateOf<String?>(null) }
+
+                val tabItems = remember {
+                    listOf(
+                        NavItem(Routes.HOME, "Home", Icons.Outlined.Home, Icons.Filled.Home),
+                        NavItem(Routes.PAIR, "Pair", Icons.Outlined.QrCodeScanner, Icons.Filled.QrCodeScanner),
+                        NavItem(Routes.LABS, "Labs", Icons.Outlined.Science, Icons.Filled.Science),
+                        NavItem(Routes.SETTINGS, "Settings", Icons.Outlined.Settings, Icons.Filled.Settings),
+                    )
+                }
+
+                val pagerState = rememberPagerState { tabItems.size }
+                val isOnTabs = currentRoute == Routes.TABS || currentRoute == null
+
+                // Sync bottom nav tap → pager
+                fun navigateToTab(index: Int) {
+                    coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                }
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
-                        // Hide bottom nav on chat screen
-                        if (currentRoute?.startsWith(Routes.CHAT) != true) {
+                        // Hide bottom nav on detail/chat screens
+                        if (isOnTabs) {
                             NavigationBar(
                                 tonalElevation = 0.dp,
                                 containerColor = MaterialTheme.colorScheme.surface,
                             ) {
-                                val items = listOf(
-                                    NavItem(Routes.HOME, "Home", Icons.Outlined.Home, Icons.Filled.Home),
-                                    NavItem(Routes.PAIR, "Pair", Icons.Outlined.QrCodeScanner, Icons.Filled.QrCodeScanner),
-                                    NavItem(Routes.LABS, "Labs", Icons.Outlined.Science, Icons.Filled.Science),
-                                    NavItem(Routes.SETTINGS, "Settings", Icons.Outlined.Settings, Icons.Filled.Settings),
-                                )
-                                items.forEach { item ->
-                                    val selected = if (item.route == Routes.PAIR) {
-                                        currentRoute?.startsWith(Routes.PAIR) == true
-                                    } else {
-                                        currentRoute == item.route
-                                    }
+                                tabItems.forEachIndexed { index, item ->
+                                    val selected = pagerState.currentPage == index
                                     NavigationBarItem(
                                         icon = {
                                             Icon(
@@ -112,15 +132,7 @@ class MainActivity : ComponentActivity() {
                                             )
                                         },
                                         selected = selected,
-                                        onClick = {
-                                            navController.navigate(item.route) {
-                                                if (item.route == Routes.HOME) {
-                                                    popUpTo(Routes.HOME) { inclusive = true }
-                                                } else {
-                                                    launchSingleTop = true
-                                                }
-                                            }
-                                        },
+                                        onClick = { navigateToTab(index) },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = MaterialTheme.colorScheme.primary,
                                             selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -134,8 +146,6 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                 ) { innerPadding ->
-                    // Chat screen handles its own bottom insets (IME + nav bar),
-                    // so provide a version without bottom padding for that route.
                     val chatPadding = PaddingValues(
                         top = innerPadding.calculateTopPadding(),
                         bottom = 0.dp,
@@ -187,25 +197,43 @@ class MainActivity : ComponentActivity() {
 
                     NavHost(
                         navController = navController,
-                        startDestination = Routes.HOME,
+                        startDestination = Routes.TABS,
                         modifier = Modifier.padding(if (isChatRoute) chatPadding else innerPadding),
                     ) {
-                        composable(Routes.HOME) {
-                            HomeScreen(
-                                onModelClick = { modelId ->
-                                    navController.navigate("${Routes.MODEL_DETAIL}/$modelId")
-                                },
-                            )
+                        composable(Routes.TABS) {
+                            HorizontalPager(
+                                state = pagerState,
+                                modifier = Modifier.fillMaxSize(),
+                                beyondViewportPageCount = 1,
+                            ) { page ->
+                                when (page) {
+                                    0 -> HomeScreen(
+                                        onModelClick = { modelId ->
+                                            navController.navigate("${Routes.MODEL_DETAIL}/$modelId")
+                                        },
+                                    )
+                                    1 -> PairScreen(
+                                        initialCode = pendingPairCode.also { pendingPairCode = null },
+                                        host = pendingPairHost.also { pendingPairHost = null },
+                                        onComplete = { navigateToTab(0) },
+                                        onNavigateToChat = { modelName ->
+                                            val encoded = URLEncoder.encode(modelName, "UTF-8")
+                                            navController.navigate("${Routes.CHAT}/$encoded")
+                                        },
+                                    )
+                                    2 -> LabsScreen()
+                                    3 -> SettingsScreen()
+                                }
+                            }
                         }
 
+                        // Deep link handler — navigates to Pair tab with params
                         composable(
                             route = "${Routes.PAIR}?code={code}&token={token}&host={host}&server={server}",
                             deepLinks = listOf(
-                                // Path-based: /pair/CODE (new short format)
                                 navDeepLink { uriPattern = "octomil://pair/{code}" },
                                 navDeepLink { uriPattern = "https://octomil.com/pair/{code}" },
                                 navDeepLink { uriPattern = "https://app.octomil.com/pair/{code}" },
-                                // Query-based: /pair?token=CODE (legacy)
                                 navDeepLink { uriPattern = "octomil://pair?code={code}" },
                                 navDeepLink { uriPattern = "octomil://pair?token={token}&host={host}" },
                                 navDeepLink { uriPattern = "https://octomil.com/pair?token={token}" },
@@ -219,25 +247,19 @@ class MainActivity : ComponentActivity() {
                                 navArgument("server") { type = NavType.StringType; defaultValue = ""; nullable = true },
                             ),
                         ) { backStackEntry ->
-                            // Support both code/token and host/server param names
                             val code = backStackEntry.arguments?.getString("code")?.takeIf { it.isNotBlank() }
                                 ?: backStackEntry.arguments?.getString("token")?.takeIf { it.isNotBlank() }
                             val host = backStackEntry.arguments?.getString("host")?.takeIf { it.isNotBlank() }
                                 ?: backStackEntry.arguments?.getString("server")?.takeIf { it.isNotBlank() }
 
-                            PairScreen(
-                                initialCode = code,
-                                host = host,
-                                onComplete = {
-                                    navController.navigate(Routes.HOME) {
-                                        popUpTo(Routes.HOME) { inclusive = true }
-                                    }
-                                },
-                                onNavigateToChat = { modelName ->
-                                    val encoded = URLEncoder.encode(modelName, "UTF-8")
-                                    navController.navigate("${Routes.CHAT}/$encoded")
-                                },
-                            )
+                            LaunchedEffect(code, host) {
+                                pendingPairCode = code
+                                pendingPairHost = host
+                                navController.navigate(Routes.TABS) {
+                                    popUpTo(Routes.TABS) { inclusive = true }
+                                }
+                                pagerState.scrollToPage(1)
+                            }
                         }
 
                         composable(
@@ -281,14 +303,6 @@ class MainActivity : ComponentActivity() {
                                 onBack = { navController.popBackStack() },
                             )
                         }
-
-                        composable(Routes.LABS) {
-                            LabsScreen()
-                        }
-
-                        composable(Routes.SETTINGS) {
-                            SettingsScreen()
-                        }
                     }
                     } // Box
                 }
@@ -303,6 +317,7 @@ class MainActivity : ComponentActivity() {
 }
 
 object Routes {
+    const val TABS = "tabs"
     const val HOME = "home"
     const val PAIR = "pair"
     const val MODEL_DETAIL = "model_detail"

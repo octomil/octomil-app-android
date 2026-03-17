@@ -24,6 +24,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ai.octomil.Octomil
+import ai.octomil.manifest.ModelRef
+import ai.octomil.text.TextPredictionRequest
 import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.ui.OctomilColors
 import ai.octomil.app.voice.AudioRecorder
@@ -310,7 +312,13 @@ private fun PredictionCard() {
             status = "predicting\u2026"
             try {
                 val t0 = System.currentTimeMillis()
-                suggestions = Octomil.text.predict("smollm2-135m", text, k = 8)
+                val result = Octomil.text.predictions.create(
+                    TextPredictionRequest(
+                        model = ModelRef.Id("smollm2-135m"),
+                        input = text,
+                    )
+                )
+                suggestions = result.predictions.map { it.text }
                 val elapsed = System.currentTimeMillis() - t0
                 status = "predicted (${elapsed}ms), ${suggestions.size} suggestions"
             } catch (e: Exception) {

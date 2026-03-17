@@ -17,7 +17,9 @@ import ai.octomil.app.keyboard.PredictionState
 import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.voice.AudioRecorder
 import ai.octomil.app.voice.VoiceState
+import ai.octomil.manifest.ModelRef
 import ai.octomil.runtime.ModelKeepAliveService
+import ai.octomil.text.TextPredictionRequest
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -398,7 +400,13 @@ class ChatViewModel(
         predictionJob = viewModelScope.launch {
             delay(200) // debounce
             try {
-                val suggestions = Octomil.text.predict("smollm2-135m", text, k = 8)
+                val result = Octomil.text.predictions.create(
+                    TextPredictionRequest(
+                        model = ModelRef.Id("smollm2-135m"),
+                        input = text,
+                    )
+                )
+                val suggestions = result.predictions.map { it.text }
                 _predictionState.value = if (suggestions.isNotEmpty()) {
                     PredictionState.Ready(suggestions)
                 } else {

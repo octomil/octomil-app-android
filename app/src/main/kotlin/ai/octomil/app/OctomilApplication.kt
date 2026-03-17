@@ -4,14 +4,23 @@ import android.app.Application
 import android.os.Build
 import ai.octomil.Octomil
 import ai.octomil.chat.LLMRuntime
+import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.client.OctomilClient
 import android.util.Log
 import ai.octomil.config.OctomilConfig
+import ai.octomil.generated.DeliveryMode
 import ai.octomil.generated.ModelCapability
 import ai.octomil.discovery.DiscoveryManager
+import ai.octomil.manifest.AppManifest
+import ai.octomil.manifest.AppModelEntry
 import ai.octomil.app.models.PairedModel
+import ai.octomil.app.runtime.LlamaCppRuntime
 import ai.octomil.app.services.LocalPairingServer
 import androidx.compose.runtime.mutableStateListOf
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -25,6 +34,7 @@ class OctomilApplication : Application() {
         private set
 
     private var discoveryManager: DiscoveryManager? = null
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val pairedModels = mutableStateListOf<PairedModel>()
 
@@ -121,7 +131,10 @@ class OctomilApplication : Application() {
             Log.e("OctomilApp", "Failed to pre-load sherpa-onnx-jni", e)
         }
 
-        // Initialize Octomil SDK — wires LLM, speech, and prediction runtimes
+        // Wire llama.cpp as the LLM runtime before SDK init
+        LLMRuntimeRegistry.factory = LlamaCppRuntime.factory(this)
+
+        // Synchronous init — wires ModelRuntimeRegistry so chat/predictions work immediately
         Octomil.init(this)
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
@@ -150,6 +163,17 @@ class OctomilApplication : Application() {
         }
 
         loadPairedModels()
+
+        // Bootstrap catalog in background so capability-based routing is available
+        val manifest = buildAppManifest()
+        appScope.launch {
+            try {
+                Octomil.configure(this@OctomilApplication, manifest)
+                Log.i("OctomilApp", "Octomil.configure() complete — ${manifest.models.size} model(s)")
+            } catch (e: Exception) {
+                Log.w("OctomilApp", "Octomil.configure() failed: ${e.message}")
+            }
+        }
 
         // Start server + mDNS off main thread to speed up cold launch
         Thread { startLocalServer() }.start()
@@ -222,6 +246,24 @@ class OctomilApplication : Application() {
             prefs.edit().putString("device_id", id).apply()
         }
         return id
+    }
+
+    /**
+     * Build an [AppManifest] from the currently paired models.
+     *
+     * Maps each [PairedModel] to an [AppModelEntry] with its first capability
+     * (or CHAT as default). All paired models use [DeliveryMode.MANAGED] since
+     * they were deployed from the server via `octomil deploy --phone`.
+     */
+    private fun buildAppManifest(): AppManifest {
+        val entries = pairedModels.map { model ->
+            AppModelEntry(
+                id = model.name,
+                capability = model.capabilities.firstOrNull() ?: ModelCapability.CHAT,
+                delivery = DeliveryMode.MANAGED,
+            )
+        }
+        return AppManifest(models = entries)
     }
 
     override fun onTerminate() {

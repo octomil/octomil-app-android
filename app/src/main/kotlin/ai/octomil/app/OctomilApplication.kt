@@ -2,10 +2,8 @@ package ai.octomil.app
 
 import android.app.Application
 import android.os.Build
-import ai.octomil.app.chat.LlamaCppRuntime
 import ai.octomil.Octomil
 import ai.octomil.chat.LLMRuntime
-import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.client.OctomilClient
 import android.util.Log
 import ai.octomil.config.OctomilConfig
@@ -97,16 +95,16 @@ class OctomilApplication : Application() {
         super.onCreate()
         instance = this
 
-        // Register llama.cpp as the LLM runtime for GGUF models
-        LLMRuntimeRegistry.factory = { modelFile ->
-            // Look for mmproj file alongside the model
-            val mmprojFile = modelFile.parentFile?.listFiles()?.firstOrNull { f ->
-                f.name.contains("mmproj", ignoreCase = true) && f.extension == "gguf"
-            }
-            LlamaCppRuntime(modelFile, mmprojFile, this)
+        // Eagerly load sherpa-onnx native library BEFORE HWUI render threads
+        // are fully active. This isolates JNI_OnLoad from UI rendering.
+        try {
+            System.loadLibrary("sherpa-onnx-jni")
+            Log.i("OctomilApp", "Pre-loaded sherpa-onnx-jni native library")
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e("OctomilApp", "Failed to pre-load sherpa-onnx-jni", e)
         }
 
-        // Initialize Octomil SDK — wires LLM + speech runtime registries
+        // Initialize Octomil SDK — wires LLM, speech, and prediction runtimes
         Octomil.init(this)
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
@@ -138,6 +136,9 @@ class OctomilApplication : Application() {
 
         // Start server + mDNS off main thread to speed up cold launch
         Thread { startLocalServer() }.start()
+
+        // Note: Speech recognition runs in a separate process (SpeechService)
+        // to avoid Samsung HWUI crash when loading ONNX Runtime models.
     }
 
     fun addPairedModel(model: PairedModel) {

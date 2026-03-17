@@ -27,7 +27,10 @@ includeBuild("octomil-android") {
 // Workspace root (parent of octomil-app-android)
 val workspaceRoot = settings.settingsDir.parentFile
 
-// Include llama.cpp Android lib for on-device LLM inference
+// TRANSITIONAL: llama.cpp composite build needed because Gradle composite builds
+// are not transitive. The SDK declares implementation("com.arm.aichat:lib") but
+// Gradle can only substitute it if this root also includes the build.
+// Removed when SDK publishes Maven AARs with bundled native libs.
 includeBuild(workspaceRoot.resolve("research/engines/llama.cpp/examples/llama.android")) {
     dependencySubstitution {
         substitute(module("com.arm.aichat:lib")).using(project(":lib"))

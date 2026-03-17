@@ -24,13 +24,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ai.octomil.Octomil
-import ai.octomil.app.keyboard.TokenSuggestionFilter
+import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.ui.OctomilColors
 import ai.octomil.app.voice.AudioRecorder
-import ai.octomil.speech.SpeechSession
-import com.arm.aichat.AiChat
-import com.arm.aichat.InferenceEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "LabsScreen"
 
@@ -72,9 +71,11 @@ fun LabsScreen() {
 
 @Composable
 private fun SpeechRecognitionCard() {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var session by remember { mutableStateOf<SpeechSession?>(null) }
+    val speechClient = remember { SpeechServiceClient(context) }
+    var hasSession by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("idle") }
     var transcriptionResult by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
@@ -83,18 +84,31 @@ private fun SpeechRecognitionCard() {
     val recorder = remember { AudioRecorder() }
     val durationMs by recorder.durationMs.collectAsState()
 
-    // Collect live transcript from active session
-    val liveTranscript by session?.transcript?.collectAsState() ?: remember { mutableStateOf("") }
+    // Collect live transcript from service
+    val liveTranscript by speechClient.transcript.collectAsState()
+
+    // Connect to speech service on first composition
+    DisposableEffect(Unit) {
+        speechClient.connect()
+        onDispose {
+            if (hasSession) {
+                speechClient.releaseSession()
+            }
+            speechClient.disconnect()
+        }
+    }
 
     fun stopRecording() {
-        val currentSession = session ?: return
+        if (!hasSession) return
         recorder.stopStreaming()
         isRecording = false
         status = "finalizing\u2026"
         scope.launch {
             try {
                 val t0 = System.currentTimeMillis()
-                val finalText = currentSession.finalize()
+                val finalText = withContext(Dispatchers.IO) {
+                    speechClient.finalizeSession()
+                }
                 val elapsed = System.currentTimeMillis() - t0
                 transcriptionResult = finalText
                 status = "done (${elapsed}ms finalize)"
@@ -102,8 +116,8 @@ private fun SpeechRecognitionCard() {
                 Log.e(TAG, "Finalize failed", e)
                 status = "finalize failed: ${e.message}"
             } finally {
-                currentSession.release()
-                session = null
+                speechClient.releaseSession()
+                hasSession = false
             }
         }
     }
@@ -113,15 +127,15 @@ private fun SpeechRecognitionCard() {
             isLoading = true
             status = "loading model\u2026"
             try {
-                val newSession = Octomil.audio.streamingSession("sherpa-zipformer-en-20m")
-                session = newSession
+                speechClient.createSession("sherpa-zipformer-en-20m")
+                hasSession = true
                 isLoading = false
                 isRecording = true
                 status = "recording\u2026"
                 transcriptionResult = ""
 
                 recorder.startStreaming { chunk ->
-                    newSession.feed(chunk)
+                    speechClient.feed(chunk)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Speech session failed", e)
@@ -186,49 +200,24 @@ private fun SpeechRecognitionCard() {
 
 @Composable
 private fun PredictionCard() {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var engine by remember { mutableStateOf<InferenceEngine?>(null) }
-    var predictionHandle by remember { mutableStateOf<Long?>(null) }
     var status by remember { mutableStateOf("idle") }
     var inputText by remember { mutableStateOf("The weather today is") }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var isPredicting by remember { mutableStateOf(false) }
 
-    val isModelLoaded = predictionHandle != null
-
-    // Auto-load model if needed, then predict
+    // Auto-load model if needed, then predict — OctomilText manages lifecycle
     fun predictNext(text: String) {
         scope.launch {
-            if (predictionHandle == null) {
-                isLoading = true
-                status = "loading smollm2-135m\u2026"
-                try {
-                    val eng = AiChat.getInferenceEngine(context)
-                    engine = eng
-                    val modelsDir = context.filesDir.resolve("octomil_models/smollm2-135m/1.0.0")
-                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "gguf" }
-                        ?: error("SmolLM2 model not found in ${modelsDir.absolutePath}")
-                    predictionHandle = eng.loadModelHandle(file.absolutePath)
-                    status = "loaded"
-                } catch (e: Exception) {
-                    Log.e(TAG, "Prediction model load failed", e)
-                    status = "load failed: ${e.message}"
-                    isLoading = false
-                    return@launch
-                }
-                isLoading = false
-            }
             isPredicting = true
             status = "predicting\u2026"
             try {
                 val t0 = System.currentTimeMillis()
-                val raw = engine!!.predictNext(predictionHandle!!, text, k = 8)
+                suggestions = Octomil.text.predict("smollm2-135m", text, k = 8)
                 val elapsed = System.currentTimeMillis() - t0
-                suggestions = TokenSuggestionFilter.process(raw)
-                status = "predicted (${elapsed}ms), ${raw.size} raw \u2192 ${suggestions.size} suggestions"
+                status = "predicted (${elapsed}ms), ${suggestions.size} suggestions"
             } catch (e: Exception) {
                 Log.e(TAG, "Prediction failed", e)
                 status = "prediction failed: ${e.message}"
@@ -283,7 +272,7 @@ private fun PredictionCard() {
                             inputText = newText
                             suggestions = emptyList()
                             // Auto-predict next token
-                            if (isModelLoaded) predictNext(newText)
+                            predictNext(newText)
                         },
                         label = { Text(suggestion) },
                         shape = RoundedCornerShape(8.dp),

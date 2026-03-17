@@ -43,3 +43,10 @@ includeBuild(workspaceRoot.resolve("research/engines/sherpa-onnx/android/SherpaO
         substitute(module("com.k2fsa.sherpa:onnx")).using(project(":sherpa_onnx"))
     }
 }
+
+// whisper.cpp Android lib for batch speech-to-text
+includeBuild(workspaceRoot.resolve("research/engines/whisper.cpp/examples/whisper.android")) {
+    dependencySubstitution {
+        substitute(module("com.whispercpp:lib")).using(project(":lib"))
+    }
+}

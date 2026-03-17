@@ -27,6 +27,7 @@ import ai.octomil.Octomil
 import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.ui.OctomilColors
 import ai.octomil.app.voice.AudioRecorder
+import ai.octomil.app.voice.WhisperRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,19 +70,18 @@ fun LabsScreen() {
 
 // ── Speech Recognition Card ──
 
-private val SPEECH_MODELS = listOf(
-    "sherpa-zipformer-en-20m" to "Zipformer 20M",
-    "whispernet" to "WhisperNet",
-)
+private enum class SpeechMode(val label: String) {
+    STREAMING("Zipformer 20M (live)"),
+    BATCH("Whisper Tiny (batch)"),
+}
 
 @Composable
 private fun SpeechRecognitionCard() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val speechClient = remember { SpeechServiceClient(context) }
-    var hasSession by remember { mutableStateOf(false) }
-    var selectedModel by remember { mutableStateOf(SPEECH_MODELS[0].first) }
+    // Shared state
+    var mode by remember { mutableStateOf(SpeechMode.STREAMING) }
     var status by remember { mutableStateOf("idle") }
     var transcriptionResult by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
@@ -90,44 +90,68 @@ private fun SpeechRecognitionCard() {
     val recorder = remember { AudioRecorder() }
     val durationMs by recorder.durationMs.collectAsState()
 
-    // Collect live transcript from service
+    // Streaming mode state (sherpa-onnx via SpeechService)
+    val speechClient = remember { SpeechServiceClient(context) }
+    var hasSession by remember { mutableStateOf(false) }
     val liveTranscript by speechClient.transcript.collectAsState()
 
-    // Connect to speech service on first composition
+    // Batch mode state (whisper.cpp)
+    var whisperRuntime by remember { mutableStateOf<WhisperRuntime?>(null) }
+
     DisposableEffect(Unit) {
         speechClient.connect()
         onDispose {
-            if (hasSession) {
-                speechClient.releaseSession()
-            }
+            if (hasSession) speechClient.releaseSession()
             speechClient.disconnect()
+            scope.launch { whisperRuntime?.release() }
         }
     }
 
     fun stopRecording() {
-        recorder.stopStreaming()
         isRecording = false
-        if (!hasSession) {
-            status = "idle"
-            isLoading = false
-            return
-        }
-        status = "finalizing\u2026"
-        scope.launch {
-            try {
-                val t0 = System.currentTimeMillis()
-                val finalText = withContext(Dispatchers.IO) {
-                    speechClient.finalizeSession()
+        when (mode) {
+            SpeechMode.STREAMING -> {
+                recorder.stopStreaming()
+                if (!hasSession) {
+                    status = "idle"
+                    isLoading = false
+                    return
                 }
-                val elapsed = System.currentTimeMillis() - t0
-                transcriptionResult = finalText
-                status = "done (${elapsed}ms finalize)"
-            } catch (e: Exception) {
-                Log.e(TAG, "Finalize failed", e)
-                status = "finalize failed: ${e.message}"
-            } finally {
-                speechClient.releaseSession()
-                hasSession = false
+                status = "finalizing\u2026"
+                scope.launch {
+                    try {
+                        val t0 = System.currentTimeMillis()
+                        val finalText = withContext(Dispatchers.IO) {
+                            speechClient.finalizeSession()
+                        }
+                        val elapsed = System.currentTimeMillis() - t0
+                        transcriptionResult = finalText
+                        status = "done (${elapsed}ms finalize)"
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Finalize failed", e)
+                        status = "finalize failed: ${e.message}"
+                    } finally {
+                        speechClient.releaseSession()
+                        hasSession = false
+                    }
+                }
+            }
+            SpeechMode.BATCH -> {
+                val samples = recorder.stopRecording()
+                val rt = whisperRuntime ?: return
+                status = "transcribing ${samples.size} samples\u2026"
+                scope.launch {
+                    try {
+                        val t0 = System.currentTimeMillis()
+                        val text = rt.transcribe(samples)
+                        val elapsed = System.currentTimeMillis() - t0
+                        transcriptionResult = text
+                        status = "done (${elapsed}ms)"
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Whisper transcribe failed", e)
+                        status = "error: ${e.message}"
+                    }
+                }
             }
         }
     }
@@ -136,42 +160,65 @@ private fun SpeechRecognitionCard() {
         scope.launch {
             isLoading = true
             isRecording = true
-            status = "loading $selectedModel\u2026"
             transcriptionResult = ""
 
-            // Start recording immediately — buffer chunks while model loads
-            val pendingChunks = mutableListOf<FloatArray>()
-            val sessionReady = java.util.concurrent.atomic.AtomicBoolean(false)
+            when (mode) {
+                SpeechMode.STREAMING -> {
+                    status = "loading zipformer\u2026"
 
-            recorder.startStreaming { chunk ->
-                if (sessionReady.get()) {
-                    speechClient.feed(chunk)
-                } else {
-                    synchronized(pendingChunks) { pendingChunks.add(chunk) }
-                }
-            }
+                    // Start recording immediately — buffer while model loads
+                    val pendingChunks = mutableListOf<FloatArray>()
+                    val sessionReady = java.util.concurrent.atomic.AtomicBoolean(false)
 
-            try {
-                speechClient.createSession(selectedModel)
-                hasSession = true
-
-                // Flush buffered audio that arrived during model load
-                synchronized(pendingChunks) {
-                    for (chunk in pendingChunks) {
-                        speechClient.feed(chunk)
+                    recorder.startStreaming { chunk ->
+                        if (sessionReady.get()) {
+                            speechClient.feed(chunk)
+                        } else {
+                            synchronized(pendingChunks) { pendingChunks.add(chunk) }
+                        }
                     }
-                    pendingChunks.clear()
-                    sessionReady.set(true)
-                }
 
-                isLoading = false
-                status = "recording ($selectedModel)\u2026"
-            } catch (e: Exception) {
-                Log.e(TAG, "Speech session failed", e)
-                recorder.stopStreaming()
-                status = "error: ${e.message}"
-                isLoading = false
-                isRecording = false
+                    try {
+                        speechClient.createSession("sherpa-zipformer-en-20m")
+                        hasSession = true
+
+                        synchronized(pendingChunks) {
+                            for (chunk in pendingChunks) speechClient.feed(chunk)
+                            pendingChunks.clear()
+                            sessionReady.set(true)
+                        }
+
+                        isLoading = false
+                        status = "recording (live)\u2026"
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Speech session failed", e)
+                        recorder.stopStreaming()
+                        status = "error: ${e.message}"
+                        isLoading = false
+                        isRecording = false
+                    }
+                }
+                SpeechMode.BATCH -> {
+                    status = "loading whisper-tiny\u2026"
+                    try {
+                        if (whisperRuntime == null) {
+                            val modelsDir = context.filesDir.resolve("octomil_models/whisper-tiny/1.0.0")
+                            val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
+                                ?: error("Whisper model not found in ${modelsDir.absolutePath}")
+                            val rt = WhisperRuntime(file)
+                            rt.loadModel()
+                            whisperRuntime = rt
+                        }
+                        isLoading = false
+                        status = "recording (batch)\u2026"
+                        recorder.startRecording()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Whisper load failed", e)
+                        status = "error: ${e.message}"
+                        isLoading = false
+                        isRecording = false
+                    }
+                }
             }
         }
     }
@@ -196,11 +243,11 @@ private fun SpeechRecognitionCard() {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SPEECH_MODELS.forEach { (modelId, label) ->
+            SpeechMode.entries.forEach { m ->
                 FilterChip(
-                    selected = selectedModel == modelId,
-                    onClick = { if (!isRecording && !isLoading) selectedModel = modelId },
-                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                    selected = mode == m,
+                    onClick = { if (!isRecording && !isLoading) mode = m },
+                    label = { Text(m.label, style = MaterialTheme.typography.labelMedium) },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(8.dp),
                     enabled = !isRecording && !isLoading,
@@ -224,8 +271,8 @@ private fun SpeechRecognitionCard() {
             variant = if (isRecording) LabButtonVariant.Destructive else LabButtonVariant.Primary,
         )
 
-        // Live transcript while recording
-        val displayText = if (isRecording) liveTranscript else transcriptionResult
+        // Live transcript (streaming) or final result (batch)
+        val displayText = if (mode == SpeechMode.STREAMING && isRecording) liveTranscript else transcriptionResult
         if (displayText.isNotBlank()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),

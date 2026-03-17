@@ -85,6 +85,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Both llama.cpp and whisper.cpp ship libomp.so — keep first
+            pickFirsts += "lib/arm64-v8a/libomp.so"
         }
     }
 }
@@ -112,6 +114,9 @@ dependencies {
     // Google Code Scanner — handles camera internally via Play Services,
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+
+    // whisper.cpp for batch speech-to-text
+    implementation("com.whispercpp:lib")
 
     // Coil for async image loading in Compose
     implementation("io.coil-kt:coil-compose:2.7.0")

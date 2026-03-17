@@ -12,11 +12,11 @@ import ai.octomil.chat.LLMRuntimeRegistry
 import ai.octomil.chat.ThreadMessage
 import ai.octomil.responses.ContentPart
 import ai.octomil.app.OctomilApplication
+import ai.octomil.Octomil
 import ai.octomil.app.keyboard.PredictionState
-import ai.octomil.app.keyboard.TokenSuggestionFilter
+import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.voice.AudioRecorder
 import ai.octomil.app.voice.VoiceState
-import ai.octomil.app.voice.WhisperRuntime
 import ai.octomil.runtime.ModelKeepAliveService
 import android.app.Application
 import android.net.Uri
@@ -25,17 +25,16 @@ import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.arm.aichat.AiChat
-import com.arm.aichat.InferenceEngine
-import com.arm.aichat.ProgressListener
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ViewModel for the chat screen — manages LLM lifecycle and streaming generation.
@@ -97,16 +96,14 @@ class ChatViewModel(
     private val recorder = AudioRecorder()
     val recordingDurationMs: StateFlow<Long> = recorder.durationMs
 
-    private var whisperRuntime: WhisperRuntime? = null
+    private val speechClient = SpeechServiceClient(application)
 
     // ── Keyboard Prediction (SmolLM2) ──
 
     private val _predictionState = MutableStateFlow<PredictionState>(PredictionState.Idle)
     val predictionState: StateFlow<PredictionState> = _predictionState.asStateFlow()
 
-    private var predictionHandle: Long? = null
     private var predictionJob: Job? = null
-    private var predictionIdleJob: Job? = null
 
     // ── Internal ──
 
@@ -161,18 +158,15 @@ class ChatViewModel(
 
                 val llmRuntime = factory(modelFile)
 
-                // Eager load if the runtime supports it.
-                // Show progress percentage from native callback.
-                if (llmRuntime is LlamaCppRuntime) {
-                    llmRuntime.setProgressListener(ProgressListener { progress ->
-                        val pct = (progress * 100).toInt()
-                        _uiState.value = UiState.Loading("Loading model… $pct%")
-                    })
-                    try {
-                        llmRuntime.loadModel()
-                    } finally {
-                        llmRuntime.setProgressListener(null)
-                    }
+                // Eager load with progress callback via generic LLMRuntime API.
+                llmRuntime.setLoadProgressListener { progress ->
+                    val pct = (progress * 100).toInt()
+                    _uiState.value = UiState.Loading("Loading model… $pct%")
+                }
+                try {
+                    llmRuntime.load()
+                } finally {
+                    llmRuntime.setLoadProgressListener(null)
                 }
 
                 runtime = llmRuntime
@@ -183,9 +177,7 @@ class ChatViewModel(
 
                 _uiState.value = UiState.Ready
                 Log.i(TAG, "Model preloaded: $modelName" +
-                    if (llmRuntime is LlamaCppRuntime) {
-                        " vision=${llmRuntime.supportsVision()} audio=${llmRuntime.supportsAudio()}"
-                    } else "")
+                    " vision=${llmRuntime.supportsVision()} audio=${llmRuntime.supportsAudio()}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to preload model: ${e::class.simpleName}: ${e.message}", e)
                 _uiState.value = UiState.Error(
@@ -366,30 +358,21 @@ class ChatViewModel(
             try {
                 val samples = recorder.stopRecording()
 
-                // Load whisper on demand
-                if (whisperRuntime == null) {
-                    _voiceState.value = VoiceState.LoadingModel
-                    val app = getApplication<OctomilApplication>()
-                    val modelsDir = app.filesDir.resolve("octomil_models/whisper-base/1.0.0")
-                    val file = modelsDir.listFiles()?.firstOrNull { it.extension == "bin" }
-                        ?: error("Whisper model not found in ${modelsDir.absolutePath}")
-                    whisperRuntime = WhisperRuntime(file).also { it.loadModel() }
-                }
-
                 _voiceState.value = VoiceState.Transcribing
-                val text = whisperRuntime!!.transcribe(samples)
 
-                // Unload immediately — free ~148MB native memory
-                whisperRuntime!!.release()
-                whisperRuntime = null
+                // Transcribe via separate-process SpeechService (avoids Samsung HWUI crash)
+                speechClient.connect()
+                speechClient.createSession("sherpa-zipformer-en-20m")
+                speechClient.feed(samples)
+                val text = withContext(Dispatchers.IO) {
+                    speechClient.finalizeSession()
+                }
+                speechClient.releaseSession()
 
                 _voiceState.value = VoiceState.Idle
                 _transcribedText.value = text.trim()
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription failed", e)
-                // Clean up whisper on error
-                whisperRuntime?.release()
-                whisperRuntime = null
                 _voiceState.value = VoiceState.Error(e.message ?: "Transcription failed")
             }
         }
@@ -414,45 +397,17 @@ class ChatViewModel(
         predictionJob?.cancel()
         predictionJob = viewModelScope.launch {
             delay(200) // debounce
-
-            val app = getApplication<OctomilApplication>()
-            val engine = AiChat.getInferenceEngine(app)
-
-            // Load prediction model on demand
-            if (predictionHandle == null) {
-                _predictionState.value = PredictionState.Loading
-                val modelsDir = app.filesDir.resolve("octomil_models/smollm2-135m/1.0.0")
-                val file = modelsDir.listFiles()?.firstOrNull { it.extension == "gguf" }
-                if (file == null) {
-                    Log.w(TAG, "SmolLM2 prediction model not found")
-                    _predictionState.value = PredictionState.Idle
-                    return@launch
+            try {
+                val suggestions = Octomil.text.predict("smollm2-135m", text, k = 8)
+                _predictionState.value = if (suggestions.isNotEmpty()) {
+                    PredictionState.Ready(suggestions)
+                } else {
+                    PredictionState.Idle
                 }
-                predictionHandle = engine.loadModelHandle(file.absolutePath)
+            } catch (e: Exception) {
+                Log.w(TAG, "Prediction failed: ${e.message}")
+                _predictionState.value = PredictionState.Idle
             }
-
-            val raw = engine.predictNext(predictionHandle!!, text, k = 8)
-            val suggestions = TokenSuggestionFilter.process(raw)
-            _predictionState.value = if (suggestions.isNotEmpty()) {
-                PredictionState.Ready(suggestions)
-            } else {
-                PredictionState.Idle
-            }
-            resetPredictionIdleTimeout()
-        }
-    }
-
-    private fun resetPredictionIdleTimeout() {
-        predictionIdleJob?.cancel()
-        predictionIdleJob = viewModelScope.launch {
-            delay(30_000) // 30s idle timeout
-            val handle = predictionHandle ?: return@launch
-            val app = getApplication<OctomilApplication>()
-            val engine = AiChat.getInferenceEngine(app)
-            engine.unloadHandle(handle)
-            predictionHandle = null
-            _predictionState.value = PredictionState.Idle
-            Log.i(TAG, "Prediction model unloaded after idle timeout")
         }
     }
 
@@ -484,26 +439,9 @@ class ChatViewModel(
     override fun onCleared() {
         cancelGeneration()
         predictionJob?.cancel()
-        predictionIdleJob?.cancel()
 
-        // Unload prediction model if loaded
-        predictionHandle?.let { handle ->
-            viewModelScope.launch {
-                try {
-                    val app = getApplication<OctomilApplication>()
-                    AiChat.getInferenceEngine(app).unloadHandle(handle)
-                } catch (_: Exception) {}
-            }
-        }
-        predictionHandle = null
-
-        // Release whisper if loaded
-        whisperRuntime?.let { runtime ->
-            viewModelScope.launch {
-                try { runtime.release() } catch (_: Exception) {}
-            }
-        }
-        whisperRuntime = null
+        // Disconnect from speech service
+        speechClient.disconnect()
 
         // Stop the keep-alive service when leaving chat
         ModelKeepAliveService.stop(getApplication())

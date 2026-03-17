@@ -93,4 +93,76 @@ class AudioRecorder {
         Log.i(TAG, "Recorded ${samplesRecorded} samples (${_durationMs.value}ms)")
         return result
     }
+
+    // ── Streaming mode ──
+
+    /**
+     * Start recording and emit 100ms PCM float chunks on the recording thread.
+     *
+     * Each chunk is normalized to [-1, 1] at 16kHz mono — ready to feed
+     * directly into [ai.octomil.speech.SpeechSession.feed].
+     *
+     * Call [stopStreaming] to stop. Does not return accumulated samples.
+     */
+    @SuppressLint("MissingPermission")
+    fun startStreaming(onChunk: (FloatArray) -> Unit) {
+        if (_isRecording.value) return
+
+        samplesRecorded = 0
+        _durationMs.value = 0
+
+        val bufferSize = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+
+        recorder = AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            bufferSize,
+        )
+
+        recorder?.startRecording()
+        _isRecording.value = true
+
+        val chunkSamples = SAMPLE_RATE / 10 // 100ms = 1600 samples at 16kHz
+
+        recordingThread = Thread {
+            val readBuf = ShortArray(chunkSamples)
+            while (_isRecording.value && samplesRecorded < MAX_SAMPLES) {
+                val read = recorder?.read(readBuf, 0, readBuf.size) ?: break
+                if (read > 0) {
+                    samplesRecorded += read
+                    _durationMs.value = (samplesRecorded.toLong() * 1000) / SAMPLE_RATE
+
+                    // Normalize and emit chunk
+                    val chunk = FloatArray(read) { readBuf[it] / 32768f }
+                    onChunk(chunk)
+                }
+            }
+
+            if (samplesRecorded >= MAX_SAMPLES) {
+                Log.i(TAG, "Streaming auto-stopped at ${MAX_DURATION_MS}ms")
+                _isRecording.value = false
+            }
+        }.also { it.start() }
+    }
+
+    /**
+     * Stop streaming recording. No return value — chunks were already emitted.
+     */
+    fun stopStreaming() {
+        _isRecording.value = false
+        recordingThread?.join(1000)
+        recordingThread = null
+
+        recorder?.stop()
+        recorder?.release()
+        recorder = null
+
+        Log.i(TAG, "Streaming stopped after ${samplesRecorded} samples (${_durationMs.value}ms)")
+    }
 }

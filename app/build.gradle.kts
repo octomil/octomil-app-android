@@ -73,6 +73,7 @@ android {
 
     buildFeatures {
         compose = true
+        aidl = true
     }
 
     testOptions {
@@ -84,14 +85,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // Both llama.cpp and whisper.cpp bundle their own ggml + omp libs.
-            // Pick the llama.cpp version (listed first) since it's newer.
-            pickFirsts += listOf(
-                "**/libggml.so",
-                "**/libggml-base.so",
-                "**/libggml-cpu.so",
-                "**/libomp.so",
-            )
+            // Both llama.cpp and whisper.cpp ship libomp.so — keep first
+            pickFirsts += "lib/arm64-v8a/libomp.so"
         }
     }
 }
@@ -99,8 +94,6 @@ android {
 dependencies {
     implementation("ai.octomil:octomil-client")
     implementation("ai.octomil:octomil-ui")
-    implementation("com.arm.aichat:lib")
-    implementation("com.whispercpp:lib")
 
     implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     implementation("androidx.compose.ui:ui")
@@ -121,6 +114,9 @@ dependencies {
     // Google Code Scanner — handles camera internally via Play Services,
     // bypasses CameraX (which crashes on some Samsung devices).
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+
+    // whisper.cpp for batch speech-to-text
+    implementation("com.whispercpp:lib")
 
     // Coil for async image loading in Compose
     implementation("io.coil-kt:coil-compose:2.7.0")

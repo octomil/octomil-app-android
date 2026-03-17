@@ -8,7 +8,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Thin wrapper around WhisperContext for on-device speech-to-text.
+ * Thin wrapper around WhisperContext for on-device batch speech-to-text.
  *
  * All operations run on a single IO thread. Designed to be loaded on demand
  * and unloaded immediately after transcription to free ~148MB native memory.

@@ -46,6 +46,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Speech runs in :speech process to avoid Samsung HWUI crash with ONNX Runtime -->
+        <service
+            android:name=".speech.SpeechService"
+            android:process=":speech"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

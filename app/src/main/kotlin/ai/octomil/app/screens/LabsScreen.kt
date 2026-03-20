@@ -23,9 +23,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import ai.octomil.Octomil
-import ai.octomil.manifest.ModelRef
-import ai.octomil.text.TextPredictionRequest
+import ai.octomil.*
+import ai.octomil.app.OctomilApplication
 import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.ui.OctomilColors
 import ai.octomil.app.voice.AudioRecorder
@@ -129,7 +128,7 @@ private fun SpeechRecognitionCard() {
             isLoading = true
             isRecording = true
             transcriptionResult = ""
-            status = "loading zipformer\u2026"
+            status = "loading speech model\u2026"
 
             // Start recording immediately — buffer while model loads
             val pendingChunks = mutableListOf<FloatArray>()
@@ -144,7 +143,10 @@ private fun SpeechRecognitionCard() {
             }
 
             try {
-                speechClient.createSession("sherpa-zipformer-en-20m")
+                val speechModel = OctomilApplication.instance.pairedModels
+                    .first { ModelCapability.TRANSCRIPTION in it.capabilities }
+                    .name
+                speechClient.createSession(speechModel)
                 hasSession = true
 
                 synchronized(pendingChunks) {
@@ -234,13 +236,7 @@ private fun PredictionCard() {
             status = "predicting\u2026"
             try {
                 val t0 = System.currentTimeMillis()
-                val result = Octomil.text.predictions.create(
-                    TextPredictionRequest(
-                        model = ModelRef.Id("smollm2-135m"),
-                        input = text,
-                    )
-                )
-                suggestions = result.predictions.map { it.text }
+                suggestions = Octomil.text.predict(prefix = text)
                 val elapsed = System.currentTimeMillis() - t0
                 status = "predicted (${elapsed}ms), ${suggestions.size} suggestions"
             } catch (e: Exception) {

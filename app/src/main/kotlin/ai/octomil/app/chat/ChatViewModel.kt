@@ -1,23 +1,11 @@
 package ai.octomil.app.chat
 
-import ai.octomil.Octomil
-import ai.octomil.android.AttachmentResolver
-import ai.octomil.android.LocalAttachment
+import ai.octomil.*
 import ai.octomil.app.OctomilApplication
 import ai.octomil.app.keyboard.PredictionState
 import ai.octomil.app.speech.SpeechServiceClient
 import ai.octomil.app.voice.AudioRecorder
 import ai.octomil.app.voice.VoiceState
-import ai.octomil.chat.ChatThread
-import ai.octomil.chat.GenerationMetrics
-import ai.octomil.chat.ThreadMessage
-import ai.octomil.manifest.ModelRef
-import ai.octomil.responses.ContentPart
-import ai.octomil.responses.InputItem
-import ai.octomil.responses.ResponseRequest
-import ai.octomil.responses.ResponseStreamEvent
-import ai.octomil.runtime.ModelKeepAliveService
-import ai.octomil.text.TextPredictionRequest
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -177,10 +165,10 @@ class ChatViewModel(
                     _uiState.value = UiState.Generating("Processing image…")
                     val resolvedImage = attachmentResolver.resolve(attachment)
                     val parts = buildList<ContentPart> {
-                        if (resolvedImage is ContentPart.Image) add(resolvedImage)
-                        if (text.isNotBlank()) add(ContentPart.Text(text))
+                        if (resolvedImage is ContentPartImage) add(resolvedImage)
+                        if (text.isNotBlank()) add(ContentPartText(text))
                     }
-                    inputItems.add(InputItem.User(parts))
+                    inputItems.add(InputItemUser(parts))
                 } else {
                     inputItems.add(InputItem.text(text))
                 }
@@ -212,7 +200,7 @@ class ChatViewModel(
 
                 Octomil.responses.stream(request).collect { event ->
                     when (event) {
-                        is ResponseStreamEvent.TextDelta -> {
+                        is ResponseStreamEventTextDelta -> {
                             if (tokenCount == 0) {
                                 ttftNanos = System.nanoTime() - startTime
                             }
@@ -220,7 +208,7 @@ class ChatViewModel(
                             buffer.append(event.delta)
                             _streamingText.value = buffer.toString()
                         }
-                        is ResponseStreamEvent.Done -> {
+                        is ResponseStreamEventDone -> {
                             previousResponseId = event.response.id
                         }
                         else -> { /* tool calls, errors */ }
@@ -297,8 +285,11 @@ class ChatViewModel(
                 _voiceState.value = VoiceState.Transcribing
 
                 // Transcribe via separate-process SpeechService (avoids Samsung HWUI crash)
+                val speechModel = OctomilApplication.instance.pairedModels
+                    .first { ModelCapability.TRANSCRIPTION in it.capabilities }
+                    .name
                 speechClient.connect()
-                speechClient.createSession("sherpa-zipformer-en-20m")
+                speechClient.createSession(speechModel)
                 speechClient.feed(samples)
                 val text = withContext(Dispatchers.IO) {
                     speechClient.finalizeSession()
@@ -334,13 +325,7 @@ class ChatViewModel(
         predictionJob = viewModelScope.launch {
             delay(200) // debounce
             try {
-                val result = Octomil.text.predictions.create(
-                    TextPredictionRequest(
-                        model = ModelRef.Id("smollm2-135m"),
-                        input = text,
-                    )
-                )
-                val suggestions = result.predictions.map { it.text }
+                val suggestions = Octomil.text.predict(prefix = text)
                 _predictionState.value = if (suggestions.isNotEmpty()) {
                     PredictionState.Ready(suggestions)
                 } else {

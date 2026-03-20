@@ -1,15 +1,11 @@
 package ai.octomil.app.screens
 
 import android.util.Log
+import ai.octomil.*
+import ai.octomil.pairing.ui.PairingScreen
 import ai.octomil.app.OctomilApplication
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.models.formatBytes
-import ai.octomil.api.OctomilApiFactory
-import ai.octomil.config.AuthConfig
-import ai.octomil.config.OctomilConfig
-import ai.octomil.pairing.ui.PairingScreen
-import ai.octomil.pairing.ui.PairingState
-import ai.octomil.pairing.ui.PairingViewModel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,8 +72,8 @@ fun PairScreen(
     } else if (activeCode.isNotBlank()) {
         Log.d("PairScreen", "Creating OctomilConfig for pairing: code='$activeCode' host='$activeHost'")
         val config = try {
-            OctomilConfig.Builder()
-                .auth(AuthConfig.OrgApiKey(
+            OctomilConfigBuilder()
+                .auth(AuthConfigOrgApiKey(
                     apiKey = activeCode,
                     orgId = "pairing",
                     serverUrl = activeHost,
@@ -124,7 +120,7 @@ fun PairScreen(
             }
         } else {
             val viewModel: PairingViewModel = viewModel(
-                factory = PairingViewModel.Factory(
+                factory = PairingViewModelFactory(
                     api = api,
                     context = context,
                     token = activeCode,
@@ -135,7 +131,10 @@ fun PairScreen(
             val currentState by viewModel.state.collectAsState()
             LaunchedEffect(currentState) {
                 val s = currentState
-                if (s is PairingState.Success) {
+                if (s is PairingStateSuccess) {
+                    // Derive model path from PairingManager's known storage layout
+                    val modelDir = java.io.File(context.filesDir, "octomil_models/${s.modelName}/${s.modelVersion}")
+                    val path = if (modelDir.exists()) modelDir.absolutePath else null
                     app.addPairedModel(
                         PairedModel(
                             name = s.modelName,
@@ -144,6 +143,7 @@ fun PairScreen(
                             sizeString = formatBytes(s.sizeBytes),
                             runtime = s.runtime,
                             modality = s.modality,
+                            modelPath = path,
                         ),
                     )
                 }
@@ -153,7 +153,7 @@ fun PairScreen(
                 viewModel = viewModel,
                 onTryItOut = {
                     val state = viewModel.state.value
-                    if (state is PairingState.Success) {
+                    if (state is PairingStateSuccess) {
                         onNavigateToChat(state.modelName)
                     } else {
                         onComplete()

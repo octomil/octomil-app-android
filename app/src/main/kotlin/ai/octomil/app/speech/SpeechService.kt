@@ -1,7 +1,6 @@
 package ai.octomil.app.speech
 
-import ai.octomil.Octomil
-import ai.octomil.speech.SpeechSession
+import ai.octomil.*
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder

@@ -1,6 +1,7 @@
 package ai.octomil.app.services
 
 import ai.octomil.*
+import ai.octomil.responses.ResponseStreamEvent
 import ai.octomil.app.OctomilApplication
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.speech.SpeechServiceClient
@@ -20,7 +21,7 @@ private const val TAG = "GoldenTestRunner"
 
 /**
  * Exercises each model capability through the same code paths the app uses.
- * Debug-only — invoked by `POST /golden/test/*` endpoints on the local pairing server.
+ * Debug-only — invoked by POST /golden/test endpoints on the local pairing server.
  */
 class GoldenTestRunner(
     private val context: Context,
@@ -130,13 +131,14 @@ class GoldenTestRunner(
                 },
                 output = JSONObject().apply { put("text", text) },
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             val totalMs = System.nanoTime() / 1_000_000 - startMs
+            Log.e(TAG, "Chat test failed", e)
             return result(
                 model = model.name,
                 capability = "chat",
                 passed = false,
-                error = e.message,
+                error = "${e.javaClass.simpleName}: ${e.message}",
                 metrics = JSONObject().apply { put("total_ms", totalMs) },
             )
         }
@@ -205,14 +207,14 @@ class GoldenTestRunner(
                 metrics = JSONObject().apply { put("total_ms", totalMs) },
                 output = JSONObject().apply { put("text", text) },
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             val totalMs = System.nanoTime() / 1_000_000 - startMs
             Log.e(TAG, "Transcription test failed", e)
             return result(
                 model = model.name,
                 capability = "transcription",
                 passed = false,
-                error = e.message,
+                error = "${e.javaClass.simpleName}: ${e.message}",
                 metrics = JSONObject().apply { put("total_ms", totalMs) },
             )
         }
@@ -245,13 +247,14 @@ class GoldenTestRunner(
                     put("predictions", JSONArray(suggestions))
                 },
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             val totalMs = System.nanoTime() / 1_000_000 - startMs
+            Log.e(TAG, "Prediction test failed", e)
             return result(
                 model = model.name,
                 capability = "prediction",
                 passed = false,
-                error = e.message,
+                error = "${e.javaClass.simpleName}: ${e.message}",
                 metrics = JSONObject().apply { put("total_ms", totalMs) },
             )
         }

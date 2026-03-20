@@ -309,6 +309,101 @@ class LocalPairingServerTest {
         assertEquals("All 5 requests should invoke callback", 5, callCount.get())
     }
 
+    // =========================================================================
+    // Golden harness routes
+    // =========================================================================
+
+    @Test
+    fun `GET golden status returns 200 with default status when no provider`() {
+        val s = createServer()
+        s.start()
+
+        val (status, responseBody) = sendRequest(s.port, "GET", "/golden/status")
+
+        assertTrue("Should return 200", status.contains("200"))
+        val json = JSONObject(responseBody)
+        assertEquals("idle", json.getString("phase"))
+        assertEquals(false, json.getBoolean("paired"))
+        assertEquals(false, json.getBoolean("device_registered"))
+        assertEquals(false, json.getBoolean("model_downloaded"))
+        assertEquals(false, json.getBoolean("model_activated"))
+        assertEquals(0, json.getInt("model_count"))
+        assertTrue("active_model should be null", json.isNull("active_model"))
+        assertTrue("active_version should be null", json.isNull("active_version"))
+        assertTrue("last_error should be null", json.isNull("last_error"))
+    }
+
+    @Test
+    fun `GET golden status returns 200 with custom provider status`() {
+        val customStatus = JSONObject().apply {
+            put("phase", "active")
+            put("paired", true)
+            put("device_registered", true)
+            put("model_downloaded", true)
+            put("model_activated", true)
+            put("active_model", "phi-4-mini")
+            put("active_version", "1.0.0")
+            put("model_count", 1)
+            put("last_error", JSONObject.NULL)
+        }
+        val s = LocalPairingServer(
+            onPair = { _, _, _ -> },
+            statusProvider = { customStatus },
+        )
+        server = s
+        s.start()
+
+        val (status, responseBody) = sendRequest(s.port, "GET", "/golden/status")
+
+        assertTrue("Should return 200", status.contains("200"))
+        val json = JSONObject(responseBody)
+        assertEquals("active", json.getString("phase"))
+        assertEquals(true, json.getBoolean("paired"))
+        assertEquals("phi-4-mini", json.getString("active_model"))
+        assertEquals("1.0.0", json.getString("active_version"))
+        assertEquals(1, json.getInt("model_count"))
+    }
+
+    @Test
+    fun `POST golden reset invokes reset handler and returns 200`() {
+        val resetCalled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val latch = CountDownLatch(1)
+        val s = LocalPairingServer(
+            onPair = { _, _, _ -> },
+            resetHandler = {
+                resetCalled.set(true)
+                latch.countDown()
+            },
+        )
+        server = s
+        s.start()
+
+        val (status, responseBody) = sendRequest(s.port, "POST", "/golden/reset")
+
+        assertTrue("Should wait for reset", latch.await(5, TimeUnit.SECONDS))
+        assertTrue("Should return 200", status.contains("200"))
+        assertTrue("Reset handler should have been called", resetCalled.get())
+
+        val json = JSONObject(responseBody)
+        assertEquals("ok", json.getString("status"))
+    }
+
+    @Test
+    fun `POST golden reset without handler returns noop`() {
+        val s = createServer()
+        s.start()
+
+        val (status, responseBody) = sendRequest(s.port, "POST", "/golden/reset")
+
+        assertTrue("Should return 200", status.contains("200"))
+        val json = JSONObject(responseBody)
+        assertEquals("noop", json.getString("status"))
+    }
+
+    // =========================================================================
+    // Concurrent connections
+    // =========================================================================
+
     @Test
     fun `server handles concurrent requests`() {
         val callCount = java.util.concurrent.atomic.AtomicInteger(0)

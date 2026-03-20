@@ -9,15 +9,18 @@ import java.net.ServerSocket
 import kotlin.concurrent.thread
 
 /**
- * Lightweight HTTP server for receiving pairing codes from the CLI.
+ * Lightweight HTTP server for receiving pairing codes from the CLI
+ * and exposing debug-only golden-path test endpoints.
  *
- * Listens on a random port and accepts POST /pair requests:
- * ```json
- * {"code": "ABC123", "host": "https://api.octomil.com/api/v1", "model_name": "phi-4-mini"}
- * ```
+ * Routes:
+ * - `POST /pair` — receive a pairing code from the CLI
+ * - `GET /golden/status` — report current app state for test harness
+ * - `POST /golden/reset` — clear credentials and cached models
  */
 class LocalPairingServer(
     private val onPair: (code: String, host: String?, modelName: String?) -> Unit,
+    private val statusProvider: (() -> JSONObject)? = null,
+    private val resetHandler: (() -> Unit)? = null,
 ) {
     private var serverSocket: ServerSocket? = null
     private var running = false
@@ -52,13 +55,6 @@ class LocalPairingServer(
                                 line = reader.readLine()
                             }
 
-                            if (!requestLine.startsWith("POST /pair")) {
-                                writer.print("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
-                                writer.flush()
-                                socket.close()
-                                return@thread
-                            }
-
                             // Read body
                             val body = if (contentLength > 0) {
                                 val buf = CharArray(contentLength)
@@ -68,19 +64,44 @@ class LocalPairingServer(
                                 ""
                             }
 
-                            try {
-                                val json = JSONObject(body)
-                                val code = json.getString("code")
-                                val host = json.optString("host", null)
-                                val modelName = json.optString("model_name", null)
+                            when {
+                                requestLine.startsWith("POST /pair") -> {
+                                    try {
+                                        val json = JSONObject(body)
+                                        val code = json.getString("code")
+                                        val host = json.optString("host", null)
+                                        val modelName = json.optString("model_name", null)
 
-                                onPair(code, host, modelName)
+                                        onPair(code, host, modelName)
 
-                                val response = """{"status":"ok"}"""
-                                writer.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${response.length}\r\n\r\n$response")
-                            } catch (e: Exception) {
-                                val error = """{"error":"invalid request"}"""
-                                writer.print("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: ${error.length}\r\n\r\n$error")
+                                        sendJson(writer, 200, """{"status":"ok"}""")
+                                    } catch (e: Exception) {
+                                        sendJson(writer, 400, """{"error":"invalid request"}""")
+                                    }
+                                }
+
+                                requestLine.startsWith("GET /golden/status") -> {
+                                    val provider = statusProvider
+                                    if (provider != null) {
+                                        sendJson(writer, 200, provider().toString())
+                                    } else {
+                                        sendJson(writer, 200, DEFAULT_STATUS.toString())
+                                    }
+                                }
+
+                                requestLine.startsWith("POST /golden/reset") -> {
+                                    val handler = resetHandler
+                                    if (handler != null) {
+                                        handler()
+                                        sendJson(writer, 200, """{"status":"ok"}""")
+                                    } else {
+                                        sendJson(writer, 200, """{"status":"noop"}""")
+                                    }
+                                }
+
+                                else -> {
+                                    writer.print("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
+                                }
                             }
 
                             writer.flush()
@@ -106,7 +127,28 @@ class LocalPairingServer(
         serverSocket = null
     }
 
+    private fun sendJson(writer: PrintWriter, code: Int, body: String) {
+        val status = when (code) {
+            200 -> "200 OK"
+            400 -> "400 Bad Request"
+            else -> "$code"
+        }
+        writer.print("HTTP/1.1 $status\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n$body")
+    }
+
     companion object {
         private const val TAG = "LocalPairingServer"
+
+        private val DEFAULT_STATUS = JSONObject().apply {
+            put("phase", "idle")
+            put("paired", false)
+            put("device_registered", false)
+            put("model_downloaded", false)
+            put("model_activated", false)
+            put("active_model", JSONObject.NULL)
+            put("active_version", JSONObject.NULL)
+            put("model_count", 0)
+            put("last_error", JSONObject.NULL)
+        }
     }
 }

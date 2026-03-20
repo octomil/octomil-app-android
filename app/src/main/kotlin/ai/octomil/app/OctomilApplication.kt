@@ -5,7 +5,9 @@ import android.app.Application
 import android.os.Build
 import ai.octomil.*
 import ai.octomil.app.models.PairedModel
+import ai.octomil.app.services.GoldenTestRunner
 import ai.octomil.app.services.LocalPairingServer
+import ai.octomil.app.speech.SpeechServiceClient
 import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.CoroutineScope
@@ -291,6 +293,10 @@ class OctomilApplication : Application() {
                 },
                 statusProvider = { buildGoldenStatus() },
                 resetHandler = { resetForGoldenPath() },
+                testHandler = GoldenTestRunner(
+                    context = this,
+                    speechClient = SpeechServiceClient(this),
+                ),
             )
         } else {
             LocalPairingServer { code, host, modelName ->

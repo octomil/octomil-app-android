@@ -1,6 +1,7 @@
 package ai.octomil.app.models
 
-import ai.octomil.generated.ModelCapability
+import ai.octomil.*
+import java.io.File
 
 data class PairedModel(
     val name: String,
@@ -11,11 +12,21 @@ data class PairedModel(
     val tokensPerSecond: Double? = null,
     val modality: String? = null,
     val capabilities: List<ModelCapability> = emptyList(),
+    /** Absolute path to the model directory on disk (filesDir/octomil_models/{name}/{version}). */
+    val modelPath: String? = null,
 ) {
     /** Whether this model can be opened in the chat UI. */
     val isChatModel: Boolean
         get() = capabilities.isEmpty() ||
             capabilities.contains(ModelCapability.CHAT)
+
+    /** Whether the model directory still exists on disk. */
+    val isAvailableOnDisk: Boolean
+        get() {
+            val path = modelPath ?: return false
+            val dir = File(path)
+            return dir.exists() && dir.isDirectory
+        }
 }
 
 fun formatBytes(bytes: Long): String {

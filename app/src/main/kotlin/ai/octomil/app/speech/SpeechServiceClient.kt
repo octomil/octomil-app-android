@@ -26,7 +26,7 @@ private const val TAG = "SpeechServiceClient"
  * ```
  * val client = SpeechServiceClient(context)
  * client.connect()
- * client.createSession("sherpa-zipformer-en-20m")
+ * client.createSession(speechModelName)
  * client.feed(samples)
  * val transcript = client.transcript.value   // live updates
  * val final = client.finalizeSession()

@@ -2,17 +2,10 @@ package ai.octomil.app
 
 import android.app.Application
 import android.os.Build
-import ai.octomil.Octomil
-import ai.octomil.client.OctomilClient
-import android.util.Log
-import ai.octomil.config.OctomilConfig
-import ai.octomil.generated.DeliveryMode
-import ai.octomil.generated.ModelCapability
-import ai.octomil.discovery.DiscoveryManager
-import ai.octomil.manifest.AppManifest
-import ai.octomil.manifest.AppModelEntry
+import ai.octomil.*
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.services.LocalPairingServer
+import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +49,7 @@ class OctomilApplication : Application() {
                     runtime = obj.getString("runtime"),
                     modality = obj.optString("modality", null),
                     capabilities = caps,
+                    modelPath = obj.optString("modelPath", null),
                 ))
             }
         } catch (_: Exception) { }
@@ -74,6 +68,7 @@ class OctomilApplication : Application() {
                 if (m.capabilities.isNotEmpty()) {
                     put("capabilities", JSONArray(m.capabilities.map { it.code }))
                 }
+                if (m.modelPath != null) put("modelPath", m.modelPath)
             })
         }
         getSharedPreferences("octomil", MODE_PRIVATE)
@@ -130,9 +125,9 @@ class OctomilApplication : Application() {
         // On first launch, api_key is empty — the client is created later
         // when the user pairs via saveCredentials().
         if (apiKey.isNotBlank()) {
-            client = OctomilClient.Builder(this)
+            client = OctomilClientBuilder(this)
                 .config(
-                    OctomilConfig.Builder()
+                    OctomilConfigBuilder()
                         .deviceAccessToken(apiKey)
                         .orgId(orgId)
                         .serverUrl(serverUrl)
@@ -190,9 +185,9 @@ class OctomilApplication : Application() {
         }
 
         val url = serverUrl ?: prefs.getString("server_url", "https://api.octomil.com/api/v1")!!
-        client = OctomilClient.Builder(this)
+        client = OctomilClientBuilder(this)
             .config(
-                OctomilConfig.Builder()
+                OctomilConfigBuilder()
                     .deviceAccessToken(apiKey)
                     .orgId(orgId)
                     .serverUrl(url)
@@ -240,6 +235,8 @@ class OctomilApplication : Application() {
                 id = model.name,
                 capability = model.capabilities.firstOrNull() ?: ModelCapability.CHAT,
                 delivery = DeliveryMode.MANAGED,
+                inputModalities = listOf(Modality.TEXT),
+                outputModalities = listOf(Modality.TEXT),
             )
         }
         return AppManifest(models = entries)

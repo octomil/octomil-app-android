@@ -1,10 +1,8 @@
 package ai.octomil.app.screens
 
+import ai.octomil.*
 import ai.octomil.app.OctomilApplication
 import ai.octomil.app.ui.OctomilColors
-import ai.octomil.client.OctomilClient
-import ai.octomil.errors.OctomilErrorCode
-import ai.octomil.errors.OctomilException
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -155,7 +154,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .then(
-                                    if (model.isChatModel) {
+                                    if (model.isChatModel && model.isAvailableOnDisk) {
                                         Modifier.clickable { onModelClick(model.name) }
                                     } else Modifier,
                                 )
@@ -187,19 +186,38 @@ fun HomeScreen(
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    SmallChip(text = "v${model.version}")
-                                    SmallChip(text = model.runtime)
-                                    model.capabilities.forEach { cap ->
-                                        SmallChip(text = cap.code)
+                                if (model.modelPath != null && !model.isAvailableOnDisk) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Warning,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = OctomilColors.Amber400,
+                                        )
+                                        Text(
+                                            text = "Missing \u2014 re-pair to restore",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = OctomilColors.Amber400,
+                                        )
+                                    }
+                                } else {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        SmallChip(text = "v${model.version}")
+                                        SmallChip(text = model.runtime)
+                                        model.capabilities.forEach { cap ->
+                                            SmallChip(text = cap.code)
+                                        }
                                     }
                                 }
                             }
 
-                            if (model.isChatModel) {
+                            if (model.isChatModel && model.isAvailableOnDisk) {
                                 Icon(
                                     Icons.Default.ChevronRight,
                                     contentDescription = null,

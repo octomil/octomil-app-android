@@ -1,10 +1,8 @@
 package ai.octomil.app.chat
 
-import ai.octomil.android.LocalAttachment
+import ai.octomil.*
 import ai.octomil.app.keyboard.PredictionState
 import ai.octomil.app.voice.VoiceState
-import ai.octomil.chat.ThreadMessage
-import ai.octomil.responses.ContentPart
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -303,7 +301,7 @@ private fun ChatBubble(message: ThreadMessage) {
         ) {
             Column(modifier = Modifier.padding(2.dp)) {
                 // Images
-                message.contentParts?.filterIsInstance<ContentPart.Image>()?.forEach { imagePart ->
+                message.contentParts?.filterIsInstance<ContentPartImage>()?.forEach { imagePart ->
                     val imageData = imagePart.data
                     if (imageData != null) {
                         val bytes = Base64.decode(imageData, Base64.DEFAULT)

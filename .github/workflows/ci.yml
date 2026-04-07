@@ -170,7 +170,7 @@ jobs:
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Download AAB from publish job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-aab-${{ steps.version.outputs.version }}
           path: app/build/outputs/bundle/release/

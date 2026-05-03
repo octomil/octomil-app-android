@@ -10,6 +10,7 @@ on:
 
 jobs:
   analyze:
+    timeout-minutes: 15
     name: Analyze
     runs-on: ubuntu-latest
     # CodeQL extractor is currently fragile on newer Kotlin toolchains.

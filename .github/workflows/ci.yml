@@ -67,7 +67,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
   publish-play-store:
-    timeout-minutes: 15
+    timeout-minutes: 45
     name: Publish to Play Store
     runs-on: ubuntu-latest
     needs: build

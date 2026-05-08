@@ -28,7 +28,8 @@ fun SettingsScreen() {
 
     var deviceToken by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
     var orgId by remember { mutableStateOf(prefs.getString("org_id", "") ?: "") }
-    var serverUrl by remember { mutableStateOf(prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "") }
+    val defaultServerUrl = ai.octomil.app.AppProfileResolver.defaultServerUrlString() + "/api/v1"
+    var serverUrl by remember { mutableStateOf(prefs.getString("server_url", defaultServerUrl) ?: "") }
     var deviceName by remember { mutableStateOf(prefs.getString("device_name", "") ?: "") }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -164,7 +165,7 @@ fun SettingsScreen() {
                                     scope.launch {
                                         val (fetchedOrgId, error) = fetchOrgId(
                                             apiKey = deviceToken,
-                                            serverUrl = serverUrl.ifBlank { "https://api.octomil.com/api/v1" },
+                                            serverUrl = serverUrl.ifBlank { defaultServerUrl },
                                         )
                                         isSaving = false
                                         if (fetchedOrgId != null) {

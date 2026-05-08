@@ -1,6 +1,5 @@
 package ai.octomil.app
 
-import ai.octomil.app.BuildConfig
 import android.app.Application
 import android.os.Build
 import ai.octomil.*
@@ -116,7 +115,11 @@ class OctomilApplication : Application() {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
         val orgId = prefs.getString("org_id", "") ?: ""
-        val serverUrl = prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "https://api.octomil.com/api/v1"
+        // Profile-aware default: OCTOMIL_PROFILE=staging flips this to
+        // https://api.staging.octomil.com/api/v1. Once the user pins
+        // a custom URL via Settings the SharedPreferences value wins.
+        val defaultUrl = AppProfileResolver.defaultServerUrlString() + "/api/v1"
+        val serverUrl = prefs.getString("server_url", defaultUrl) ?: defaultUrl
 
         // Initialize device name if not set
         if (prefs.getString("device_name", null) == null) {
@@ -174,7 +177,8 @@ class OctomilApplication : Application() {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
         val orgId = prefs.getString("org_id", "") ?: ""
-        val serverUrl = prefs.getString("server_url", "https://api.octomil.com") ?: "https://api.octomil.com"
+        val defaultHost = AppProfileResolver.defaultServerUrlString()
+        val serverUrl = prefs.getString("server_url", defaultHost) ?: defaultHost
         if (apiKey.isBlank() || orgId.isBlank()) return
 
         try {
@@ -271,7 +275,8 @@ class OctomilApplication : Application() {
             prefs.edit().putString("server_url", serverUrl).apply()
         }
 
-        val url = serverUrl ?: prefs.getString("server_url", "https://api.octomil.com/api/v1")!!
+        val v1Default = AppProfileResolver.defaultServerUrlString() + "/api/v1"
+        val url = serverUrl ?: prefs.getString("server_url", v1Default)!!
         client = OctomilClientBuilder(this)
             .config(
                 OctomilConfigBuilder()
@@ -293,9 +298,11 @@ class OctomilApplication : Application() {
                 resetHandler = { resetForGoldenPath() },
             )
         } else {
-            LocalPairingServer { code, host, modelName ->
-                onPairingCodeReceived?.invoke(code, host, modelName)
-            }
+            LocalPairingServer(
+                onPair = { code, host, modelName ->
+                    onPairingCodeReceived?.invoke(code, host, modelName)
+                },
+            )
         }
         server.start()
         localServer = server

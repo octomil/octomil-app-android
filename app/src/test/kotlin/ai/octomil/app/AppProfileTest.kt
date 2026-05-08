@@ -203,4 +203,71 @@ class AppProfileTest {
             AppProfileResolver.defaultServerUrlString(emptyMap())
         )
     }
+
+    // ── Hostile-URL inference safety (codex post-debate B1) ────────
+
+    @Test
+    fun `marker in query string does not spoof profile`() {
+        assertEquals(
+            AppProfile.Production,
+            AppProfileResolver.resolveDefault(
+                mapOf("OCTOMIL_API_BASE" to "https://evil.test/?next=api.staging.octomil.com")
+            )
+        )
+    }
+
+    @Test
+    fun `marker in path does not spoof profile`() {
+        assertEquals(
+            AppProfile.Production,
+            AppProfileResolver.resolveDefault(
+                mapOf("OCTOMIL_API_BASE" to "https://evil.test/api.octomil.com/v1")
+            )
+        )
+    }
+
+    @Test
+    fun `marker in userinfo does not spoof profile`() {
+        assertEquals(
+            AppProfile.Production,
+            AppProfileResolver.resolveDefault(
+                mapOf("OCTOMIL_API_BASE" to "https://api.staging.octomil.com@evil.test/v1")
+            )
+        )
+    }
+
+    @Test
+    fun `superdomain does not spoof production`() {
+        assertEquals(
+            AppProfile.Production,
+            AppProfileResolver.resolveDefault(
+                mapOf("OCTOMIL_API_BASE" to "https://api.octomil.com.evil.test/v1")
+            )
+        )
+    }
+
+    @Test
+    fun `unparseable URL falls through safely`() {
+        assertEquals(
+            AppProfile.Production,
+            AppProfileResolver.resolveDefault(
+                mapOf("OCTOMIL_API_BASE" to "not a url")
+            )
+        )
+    }
+
+    // ── Whitespace fallback (codex post-debate N1) ─────────────────
+
+    @Test
+    fun `whitespace API_BASE falls back to API_URL`() {
+        assertEquals(
+            AppProfile.Staging,
+            AppProfileResolver.resolveDefault(
+                mapOf(
+                    "OCTOMIL_API_BASE" to "   ",
+                    "OCTOMIL_API_URL" to "https://api.staging.octomil.com",
+                )
+            )
+        )
+    }
 }

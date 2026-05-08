@@ -19,6 +19,9 @@
 
 package ai.octomil.app
 
+import java.net.URI
+import java.net.URISyntaxException
+
 /** Named environments the companion app can talk to. */
 enum class AppProfile(val rawValue: String, val displayName: String) {
     Production("production", "Production"),
@@ -79,8 +82,11 @@ object AppProfileResolver {
             AppProfile.from(rawEnv)?.let { return it }
         }
 
-        val url = (env["OCTOMIL_API_BASE"] ?: "")
-            .ifEmpty { env["OCTOMIL_API_URL"] ?: "" }
+        // Trim BEFORE selecting so a whitespace OCTOMIL_API_BASE
+        // doesn't mask a valid OCTOMIL_API_URL (codex post-debate N1).
+        val baseTrimmed = (env["OCTOMIL_API_BASE"] ?: "").trim()
+        val urlTrimmed = (env["OCTOMIL_API_URL"] ?: "").trim()
+        val url = baseTrimmed.ifEmpty { urlTrimmed }
         inferFromUrl(url)?.let { return it }
 
         return AppProfile.Production
@@ -97,18 +103,28 @@ object AppProfileResolver {
         resolveDefault(environment).defaultHostUrl
 
     private fun inferFromUrl(raw: String): AppProfile? {
-        if (raw.isEmpty()) return null
-        val lowered = raw.trim().lowercase()
-        // Order matters: staging is more specific than production.
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        // Use URI to parse; substring matching the raw URL would let
+        // evil.test/?next=api.staging.octomil.com or
+        // api.octomil.com.evil.test spoof the first-run server URL
+        // (codex post-debate B1).
+        val host = try {
+            URI(trimmed).host?.lowercase()
+        } catch (_: URISyntaxException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        if (host.isNullOrEmpty()) return null
+        // Exact-host markers — staging FIRST (more specific).
         val markers = listOf(
-            AppProfile.Staging to listOf("api.staging.octomil.com"),
-            AppProfile.Production to listOf("api.octomil.com"),
-            AppProfile.Dev to listOf("localhost", "127.0.0.1", "0.0.0.0"),
+            AppProfile.Staging to setOf("api.staging.octomil.com"),
+            AppProfile.Production to setOf("api.octomil.com"),
+            AppProfile.Dev to setOf("localhost", "127.0.0.1", "0.0.0.0"),
         )
         for ((profile, ms) in markers) {
-            for (m in ms) {
-                if (lowered.contains(m)) return profile
-            }
+            if (host in ms) return profile
         }
         return null
     }

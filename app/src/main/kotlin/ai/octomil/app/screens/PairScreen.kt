@@ -49,7 +49,9 @@ fun PairScreen(
     }
 
     var activeCode by rememberSaveable { mutableStateOf(initialCode ?: "") }
-    var activeHost by rememberSaveable { mutableStateOf(host ?: "https://api.octomil.com") }
+    var activeHost by rememberSaveable {
+        mutableStateOf(host ?: ai.octomil.app.AppProfileResolver.defaultServerUrlString())
+    }
     var showScanner by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(initialCode, host) {

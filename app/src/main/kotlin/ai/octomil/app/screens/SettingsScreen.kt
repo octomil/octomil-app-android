@@ -145,7 +145,7 @@ fun SettingsScreen() {
                         value = serverUrl,
                         onValueChange = { serverUrl = it },
                         label = { Text("Server URL") },
-                        placeholder = { Text("https://api.octomil.com/api/v1") },
+                        placeholder = { Text(defaultServerUrl) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp),

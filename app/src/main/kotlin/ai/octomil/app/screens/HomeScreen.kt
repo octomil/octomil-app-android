@@ -40,7 +40,7 @@ fun HomeScreen(
     val isInitialized = OctomilClient.isInitialized()
     val localPort = app.localServer?.port ?: 0
     val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
-    val apiKey = prefs.getString("api_key", "") ?: ""
+    val apiKey = app.apiKey
     val deviceName = prefs.getString("device_name", "") ?: ""
 
     val scope = rememberCoroutineScope()

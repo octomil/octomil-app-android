@@ -26,7 +26,7 @@ fun SettingsScreen() {
     val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
 
-    var deviceToken by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
+    var deviceToken by remember(app.apiKey) { mutableStateOf(app.apiKey) }
     var orgId by remember { mutableStateOf(prefs.getString("org_id", "") ?: "") }
     var serverUrl by remember { mutableStateOf(prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "") }
     var deviceName by remember { mutableStateOf(prefs.getString("device_name", "") ?: "") }
@@ -329,14 +329,13 @@ private suspend fun fetchOrgId(apiKey: String, serverUrl: String): Pair<String?,
             val code = conn.responseCode
             if (code == 200) {
                 val body = conn.inputStream.bufferedReader().readText()
-                Log.d("Settings", "/auth/me 200: $body")
                 val orgIdMatch = Regex(""""org_id"\s*:\s*"([^"]+)"""").find(body)
                 val orgId = orgIdMatch?.groupValues?.get(1)
                 if (orgId != null) orgId to null
                 else null to "Server returned 200 but no org_id in response"
             } else {
                 val errorBody = try { conn.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
-                Log.e("Settings", "/auth/me failed: HTTP $code \u2014 $errorBody")
+                Log.e("Settings", "/auth/me failed: HTTP $code")
                 null to "HTTP $code: ${errorBody ?: conn.responseMessage}"
             }
         } catch (e: Exception) {

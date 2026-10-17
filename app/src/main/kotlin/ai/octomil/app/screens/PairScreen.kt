@@ -192,6 +192,14 @@ fun PairScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
+                    app.localServer?.let {
+                        Text(
+                            text = "LAN pairing PIN: ${it.pin}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 

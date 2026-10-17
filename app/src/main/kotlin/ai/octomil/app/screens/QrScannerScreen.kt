@@ -55,14 +55,12 @@ fun QrScannerScreen(
         scanner.startScan()
             .addOnSuccessListener { barcode ->
                 val url = barcode.rawValue
-                Log.d("QrScanner", "Scanned: type=${barcode.valueType} raw='$url'")
                 if (url != null) {
                     val parsed = parsePairingUrl(url)
-                    Log.d("QrScanner", "Parsed: code=${parsed?.first} host=${parsed?.second}")
                     if (parsed != null) {
                         onCodeScanned(parsed.first, parsed.second)
                     } else {
-                        error = "Not an Octomil pairing code: $url"
+                        error = "Not an Octomil pairing code"
                     }
                 } else {
                     error = "Empty QR code"
@@ -145,8 +143,22 @@ internal fun parsePairingUrl(url: String): Pair<String, String?>? {
 
     if (code.isBlank()) return null
 
-    val host = uri.getQueryParameter("host")
-        ?: uri.getQueryParameter("server")
+    val host = trustedPairingHost(
+        uri.getQueryParameter("host") ?: uri.getQueryParameter("server"),
+    )
 
     return code to host
+}
+
+/** Only https hosts under octomil.com may receive a pairing code; anything else is dropped. */
+internal fun trustedPairingHost(host: String?): String? {
+    if (host.isNullOrBlank()) return null
+    val uri = try {
+        android.net.Uri.parse(host.trim())
+    } catch (_: Exception) {
+        return null
+    }
+    val h = uri.host?.lowercase() ?: return null
+    val trusted = h == "octomil.com" || h.endsWith(".octomil.com")
+    return if (uri.scheme == "https" && trusted && uri.userInfo == null) host.trim() else null
 }

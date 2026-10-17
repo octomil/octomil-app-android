@@ -53,6 +53,7 @@ import ai.octomil.app.screens.ModelDetailScreen
 import ai.octomil.app.screens.PairScreen
 import ai.octomil.app.screens.LabsScreen
 import ai.octomil.app.screens.SettingsScreen
+import ai.octomil.app.screens.trustedPairingHost
 import ai.octomil.app.ui.OctomilTheme
 import kotlinx.coroutines.launch
 import java.net.URLDecoder
@@ -73,7 +74,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 // Navigate to pair screen with the received code
                 val deepLinkIntent = Intent(Intent.ACTION_VIEW).apply {
-                    data = android.net.Uri.parse("octomil://pair?code=$code${if (host != null) "&host=$host" else ""}")
+                    data = android.net.Uri.parse("octomil://pair?code=${android.net.Uri.encode(code)}${if (host != null) "&host=${android.net.Uri.encode(host)}" else ""}")
                 }
                 onNewIntent(deepLinkIntent)
             }
@@ -254,7 +255,7 @@ class MainActivity : ComponentActivity() {
 
                             LaunchedEffect(code, host) {
                                 pendingPairCode = code
-                                pendingPairHost = host
+                                pendingPairHost = trustedPairingHost(host)
                                 navController.navigate(Routes.TABS) {
                                     popUpTo(Routes.TABS) { inclusive = true }
                                 }

@@ -34,43 +34,27 @@ fun PairScreen(
     val context = LocalContext.current
     val app = OctomilApplication.instance
 
-    // Persist server URL if host was provided via deep link (only when creds exist)
-    LaunchedEffect(host) {
-        if (!host.isNullOrBlank()) {
-            val prefs = app.getSharedPreferences("octomil", android.content.Context.MODE_PRIVATE)
-            val apiKey = prefs.getString("api_key", "") ?: ""
-            val orgId = prefs.getString("org_id", "") ?: ""
-            if (apiKey.isNotBlank() && orgId.isNotBlank()) {
-                app.saveCredentials(apiKey, orgId, host)
-            } else {
-                prefs.edit().putString("server_url", host).apply()
-            }
-        }
-    }
+    val trustedHost = trustedPairingHost(host)
 
     var activeCode by rememberSaveable { mutableStateOf(initialCode ?: "") }
-    var activeHost by rememberSaveable { mutableStateOf(host ?: "https://api.octomil.com") }
+    var activeHost by rememberSaveable { mutableStateOf(trustedHost ?: "https://api.octomil.com") }
     var showScanner by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(initialCode, host) {
+    LaunchedEffect(initialCode, trustedHost) {
         if (!initialCode.isNullOrBlank()) activeCode = initialCode
-        if (!host.isNullOrBlank()) activeHost = host
+        if (trustedHost != null) activeHost = trustedHost
     }
-
-    Log.d("PairScreen", "State: activeCode='$activeCode' activeHost='$activeHost' showScanner=$showScanner initialCode=$initialCode host=$host")
 
     if (showScanner) {
         QrScannerScreen(
             onCodeScanned = { code, scannedHost ->
-                Log.d("PairScreen", "QR scanned: code='$code' host=$scannedHost")
                 activeCode = code
-                if (!scannedHost.isNullOrBlank()) activeHost = scannedHost
+                trustedPairingHost(scannedHost)?.let { activeHost = it }
                 showScanner = false
             },
             onDismiss = { showScanner = false },
         )
     } else if (activeCode.isNotBlank()) {
-        Log.d("PairScreen", "Creating OctomilConfig for pairing: code='$activeCode' host='$activeHost'")
         val config = try {
             OctomilConfigBuilder()
                 .auth(AuthConfigOrgApiKey(

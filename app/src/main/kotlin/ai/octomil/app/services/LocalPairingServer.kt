@@ -6,6 +6,8 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.ServerSocket
+import java.security.MessageDigest
+import java.security.SecureRandom
 import kotlin.concurrent.thread
 
 /**
@@ -13,9 +15,9 @@ import kotlin.concurrent.thread
  * and exposing debug-only golden-path test endpoints.
  *
  * Routes:
- * - `POST /pair` — receive a pairing code from the CLI
+ * - `POST /pair` — receive a pairing code from the CLI (requires `X-Octomil-Pin`)
  * - `GET /golden/status` — report current app state for test harness
- * - `POST /golden/reset` — clear credentials and cached models
+ * - `POST /golden/reset` — clear credentials and cached models (requires `X-Octomil-Pin`)
  */
 class LocalPairingServer(
     private val onPair: (code: String, host: String?, modelName: String?) -> Unit,
@@ -23,7 +25,11 @@ class LocalPairingServer(
     private val resetHandler: (() -> Unit)? = null,
 ) {
     private var serverSocket: ServerSocket? = null
+    @Volatile
     private var running = false
+
+    /** Per-session PIN the user reads off the device and gives to the sender. */
+    val pin: String = "%06d".format(SecureRandom().nextInt(1_000_000))
 
     val port: Int
         get() = serverSocket?.localPort ?: 0
@@ -37,6 +43,7 @@ class LocalPairingServer(
             while (running) {
                 try {
                     val socket = serverSocket?.accept() ?: break
+                    socket.soTimeout = SOCKET_TIMEOUT_MS
                     thread(isDaemon = true) {
                         try {
                             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
@@ -47,19 +54,44 @@ class LocalPairingServer(
 
                             // Read headers
                             var contentLength = 0
+                            var suppliedPin: String? = null
+                            var headerCount = 0
                             var line = reader.readLine()
                             while (!line.isNullOrEmpty()) {
+                                if (++headerCount > MAX_HEADERS) {
+                                    reject(socket, writer, 400, """{"error":"invalid request"}""")
+                                    return@thread
+                                }
                                 if (line.startsWith("Content-Length:", ignoreCase = true)) {
                                     contentLength = line.substringAfter(":").trim().toIntOrNull() ?: 0
+                                } else if (line.startsWith("X-Octomil-Pin:", ignoreCase = true)) {
+                                    suppliedPin = line.substringAfter(":").trim()
                                 }
                                 line = reader.readLine()
+                            }
+
+                            if (contentLength < 0 || contentLength > MAX_BODY_CHARS) {
+                                reject(socket, writer, 413, """{"error":"payload too large"}""")
+                                return@thread
+                            }
+
+                            val needsPin = requestLine.startsWith("POST /pair") ||
+                                requestLine.startsWith("POST /golden/reset")
+                            if (needsPin && !pinMatches(suppliedPin)) {
+                                reject(socket, writer, 401, """{"error":"unauthorized"}""")
+                                return@thread
                             }
 
                             // Read body
                             val body = if (contentLength > 0) {
                                 val buf = CharArray(contentLength)
-                                reader.read(buf, 0, contentLength)
-                                String(buf)
+                                var read = 0
+                                while (read < contentLength) {
+                                    val n = reader.read(buf, read, contentLength - read)
+                                    if (n < 0) break
+                                    read += n
+                                }
+                                String(buf, 0, read)
                             } else {
                                 ""
                             }
@@ -127,10 +159,22 @@ class LocalPairingServer(
         serverSocket = null
     }
 
+    private fun pinMatches(supplied: String?): Boolean =
+        supplied != null &&
+            MessageDigest.isEqual(supplied.toByteArray(), pin.toByteArray())
+
+    private fun reject(socket: java.net.Socket, writer: PrintWriter, code: Int, body: String) {
+        sendJson(writer, code, body)
+        writer.flush()
+        socket.close()
+    }
+
     private fun sendJson(writer: PrintWriter, code: Int, body: String) {
         val status = when (code) {
             200 -> "200 OK"
             400 -> "400 Bad Request"
+            401 -> "401 Unauthorized"
+            413 -> "413 Payload Too Large"
             else -> "$code"
         }
         writer.print("HTTP/1.1 $status\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n$body")
@@ -138,6 +182,9 @@ class LocalPairingServer(
 
     companion object {
         private const val TAG = "LocalPairingServer"
+        private const val SOCKET_TIMEOUT_MS = 10_000
+        private const val MAX_BODY_CHARS = 8 * 1024
+        private const val MAX_HEADERS = 64
 
         private val DEFAULT_STATUS = JSONObject().apply {
             put("phase", "idle")

@@ -50,7 +50,7 @@ class LocalPairingServerTest {
     /**
      * Send a raw HTTP request to the server and return the response status line + body.
      */
-    private fun sendRequest(port: Int, method: String, path: String, body: String? = null): Pair<String, String> {
+    private fun sendRequest(port: Int, method: String, path: String, body: String? = null, pin: String? = server?.pin): Pair<String, String> {
         val socket = Socket("127.0.0.1", port)
         val writer = PrintWriter(socket.getOutputStream(), true)
         val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
@@ -58,6 +58,7 @@ class LocalPairingServerTest {
         val request = StringBuilder()
         request.append("$method $path HTTP/1.1\r\n")
         request.append("Host: 127.0.0.1:$port\r\n")
+        if (pin != null) request.append("X-Octomil-Pin: $pin\r\n")
         if (body != null) {
             request.append("Content-Type: application/json\r\n")
             request.append("Content-Length: ${body.length}\r\n")
@@ -94,6 +95,17 @@ class LocalPairingServerTest {
 
         socket.close()
         return statusLine to responseBody
+    }
+
+    @Test
+    fun `pair without matching pin is rejected`() {
+        val s = createServer()
+        s.start()
+
+        val (status, _) = sendRequest(s.port, "POST", "/pair", """{"code":"ABC123"}""", pin = "wrong")
+
+        assertTrue("Expected 401, got: $status", status.contains("401"))
+        assertNull(receivedCode.get())
     }
 
     // =========================================================================

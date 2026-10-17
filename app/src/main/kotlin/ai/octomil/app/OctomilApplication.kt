@@ -7,7 +7,11 @@ import ai.octomil.*
 import ai.octomil.app.models.PairedModel
 import ai.octomil.app.services.LocalPairingServer
 import android.util.Log
+import ai.octomil.storage.SecureStorage
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.UUID
 
 class OctomilApplication : Application() {
@@ -29,6 +34,12 @@ class OctomilApplication : Application() {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val pairedModels = mutableStateListOf<PairedModel>()
+
+    private val secureStorage by lazy { SecureStorage.getInstance(this) }
+
+    /** Empty until [loadCredentials] finishes; backed by encrypted storage, never plain prefs. */
+    var apiKey by mutableStateOf("")
+        private set
 
     private fun loadPairedModels() {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
@@ -114,28 +125,10 @@ class OctomilApplication : Application() {
         Octomil.init(this)
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
-        val apiKey = prefs.getString("api_key", "") ?: ""
-        val orgId = prefs.getString("org_id", "") ?: ""
-        val serverUrl = prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "https://api.octomil.com/api/v1"
 
         // Initialize device name if not set
         if (prefs.getString("device_name", null) == null) {
             prefs.edit().putString("device_name", "${Build.MANUFACTURER} ${Build.MODEL}").apply()
-        }
-
-        // Only initialize the client if credentials are configured.
-        // On first launch, api_key is empty — the client is created later
-        // when the user pairs via saveCredentials().
-        if (apiKey.isNotBlank()) {
-            client = OctomilClientBuilder(this)
-                .config(
-                    OctomilConfigBuilder()
-                        .deviceAccessToken(apiKey)
-                        .orgId(orgId)
-                        .serverUrl(serverUrl)
-                        .build()
-                )
-                .build()
         }
 
         loadPairedModels()
@@ -151,14 +144,48 @@ class OctomilApplication : Application() {
             }
         }
 
-        // Auto-recover missing models in background
-        appScope.launch { recoverMissingModels() }
+        // Load credentials, then auto-recover missing models in background
+        appScope.launch {
+            loadCredentials()
+            recoverMissingModels()
+        }
 
         // Start server + mDNS off main thread to speed up cold launch
         Thread { startLocalServer() }.start()
 
         // Note: Speech recognition runs in a separate process (SpeechService)
         // to avoid Samsung HWUI crash when loading ONNX Runtime models.
+    }
+
+    /**
+     * Loads the API key from encrypted storage (migrating any legacy plaintext copy)
+     * and builds the client when credentials exist. On first launch the key is
+     * empty and the client is created later by [saveCredentials].
+     */
+    private suspend fun loadCredentials() {
+        val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
+        prefs.getString("api_key", null)?.let { legacy ->
+            if (legacy.isNotBlank() && secureStorage.getString(API_KEY_SECURE_KEY).isNullOrBlank()) {
+                secureStorage.putString(API_KEY_SECURE_KEY, legacy)
+            }
+            prefs.edit().remove("api_key").apply()
+        }
+
+        val key = secureStorage.getString(API_KEY_SECURE_KEY) ?: ""
+        withContext(Dispatchers.Main) { apiKey = key }
+        if (key.isBlank()) return
+
+        val orgId = prefs.getString("org_id", "") ?: ""
+        val serverUrl = prefs.getString("server_url", "https://api.octomil.com/api/v1") ?: "https://api.octomil.com/api/v1"
+        client = OctomilClientBuilder(this)
+            .config(
+                OctomilConfigBuilder()
+                    .deviceAccessToken(key)
+                    .orgId(orgId)
+                    .serverUrl(serverUrl)
+                    .build()
+            )
+            .build()
     }
 
     /**
@@ -172,25 +199,27 @@ class OctomilApplication : Application() {
         if (missing.isEmpty()) return
 
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
-        val apiKey = prefs.getString("api_key", "") ?: ""
+        val key = apiKey
         val orgId = prefs.getString("org_id", "") ?: ""
-        val serverUrl = prefs.getString("server_url", "https://api.octomil.com") ?: "https://api.octomil.com"
-        if (apiKey.isBlank() || orgId.isBlank()) return
+        val serverUrl = (prefs.getString("server_url", "https://api.octomil.com") ?: "https://api.octomil.com")
+            .trimEnd('/')
+            .removeSuffix("/api/v1")
+        if (key.isBlank() || orgId.isBlank()) return
 
         try {
             val url = java.net.URL("$serverUrl/api/v1/devices/$orgId/desired-state")
-            val conn = withContext(Dispatchers.IO) {
-                (url.openConnection() as java.net.HttpURLConnection).apply {
-                    setRequestProperty("Authorization", "Bearer $apiKey")
+            val body = withContext(Dispatchers.IO) {
+                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    setRequestProperty("Authorization", "Bearer $key")
                     connectTimeout = 15_000
                     readTimeout = 30_000
                 }
-            }
-
-            if (conn.responseCode != 200) { conn.disconnect(); return }
-
-            val body = withContext(Dispatchers.IO) { conn.inputStream.bufferedReader().readText() }
-            conn.disconnect()
+                try {
+                    if (conn.responseCode != 200) null else conn.inputStream.bufferedReader().readText()
+                } finally {
+                    conn.disconnect()
+                }
+            } ?: return
 
             val response = JSONObject(body)
             val models = response.optJSONArray("models") ?: return
@@ -205,41 +234,72 @@ class OctomilApplication : Application() {
                 val downloadUrl = entry.optString("download_url", "")
                 val modelVersion = entry.optString("model_version", "")
                 if (downloadUrl.isBlank()) continue
+                if (!isSafeSegment(modelId) || !isSafeSegment(modelVersion)) {
+                    Log.w("OctomilApp", "Skipping recovery of $modelId: unsafe path segment")
+                    continue
+                }
 
                 val modelDir = java.io.File(modelsDir, "$modelId/$modelVersion")
+                if (!modelDir.canonicalPath.startsWith(modelsDir.canonicalPath + java.io.File.separator)) continue
                 modelDir.mkdirs()
                 val targetFile = java.io.File(modelDir, "model.bin")
+                val expectedSha = entry.optString("checksum_sha256", "").takeIf { it.isNotBlank() }
 
                 try {
-                    val dlConn = withContext(Dispatchers.IO) {
-                        (java.net.URL(downloadUrl).openConnection() as java.net.HttpURLConnection).apply {
-                            connectTimeout = 15_000
-                            readTimeout = 300_000
-                        }
-                    }
-                    if (dlConn.responseCode == 200) {
-                        withContext(Dispatchers.IO) {
-                            dlConn.inputStream.use { input ->
-                                java.io.FileOutputStream(targetFile).use { output ->
-                                    input.copyTo(output)
-                                }
+                    val ok = withContext(Dispatchers.IO) { downloadVerified(downloadUrl, targetFile, expectedSha) }
+                    if (ok) {
+                        withContext(Dispatchers.Main) {
+                            val idx = pairedModels.indexOfFirst { it.name == modelId }
+                            if (idx >= 0) {
+                                pairedModels[idx] = pairedModels[idx].copy(modelPath = modelDir.absolutePath)
+                                savePairedModels()
                             }
-                        }
-                        // Update paired model path
-                        val idx = pairedModels.indexOfFirst { it.name == modelId }
-                        if (idx >= 0) {
-                            pairedModels[idx] = pairedModels[idx].copy(modelPath = modelDir.absolutePath)
-                            savePairedModels()
                         }
                         Log.i("OctomilApp", "Recovered model: $modelId")
                     }
-                    dlConn.disconnect()
                 } catch (e: Exception) {
                     Log.w("OctomilApp", "Failed to recover $modelId: ${e.message}")
                 }
             }
         } catch (e: Exception) {
             Log.w("OctomilApp", "Model recovery failed: ${e.message}")
+        }
+    }
+
+    private fun isSafeSegment(s: String): Boolean =
+        s.isNotEmpty() && s != "." && !s.contains("..") && !s.contains('/') && !s.contains('\\')
+
+    /** Downloads to a temp file and only moves it into place when the checksum (if given) matches. */
+    private fun downloadVerified(url: String, target: java.io.File, expectedSha256: String?): Boolean {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 300_000
+        val tmp = java.io.File(target.parentFile, target.name + ".part")
+        try {
+            if (conn.responseCode != 200) return false
+            val digest = MessageDigest.getInstance("SHA-256")
+            conn.inputStream.use { input ->
+                java.io.FileOutputStream(tmp).use { output ->
+                    val buf = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        output.write(buf, 0, n)
+                        digest.update(buf, 0, n)
+                    }
+                }
+            }
+            if (expectedSha256 != null) {
+                val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                if (!actual.equals(expectedSha256, ignoreCase = true)) {
+                    Log.w("OctomilApp", "Checksum mismatch for ${target.name}")
+                    return false
+                }
+            }
+            return tmp.renameTo(target)
+        } finally {
+            tmp.delete()
+            conn.disconnect()
         }
     }
 
@@ -263,9 +323,10 @@ class OctomilApplication : Application() {
     fun saveCredentials(apiKey: String, orgId: String, serverUrl: String? = null) {
         val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
         prefs.edit()
-            .putString("api_key", apiKey)
             .putString("org_id", orgId)
             .apply()
+        this.apiKey = apiKey
+        appScope.launch { secureStorage.putString(API_KEY_SECURE_KEY, apiKey) }
 
         if (serverUrl != null) {
             prefs.edit().putString("server_url", serverUrl).apply()
@@ -342,8 +403,6 @@ class OctomilApplication : Application() {
     // MARK: - Golden path harness (debug only)
 
     private fun buildGoldenStatus(): JSONObject {
-        val prefs = getSharedPreferences("octomil", MODE_PRIVATE)
-        val apiKey = prefs.getString("api_key", "") ?: ""
         val paired = apiKey.isNotBlank()
         val registered = client != null
         val onDisk = pairedModels.any { it.isAvailableOnDisk }
@@ -372,11 +431,12 @@ class OctomilApplication : Application() {
     private fun resetForGoldenPath() {
         // Clear credentials
         getSharedPreferences("octomil", MODE_PRIVATE).edit()
-            .remove("api_key")
             .remove("org_id")
             .remove("device_id")
             .apply()
         client = null
+        apiKey = ""
+        appScope.launch { secureStorage.remove(API_KEY_SECURE_KEY) }
 
         // Clear paired models
         pairedModels.clear()
@@ -396,6 +456,8 @@ class OctomilApplication : Application() {
     }
 
     companion object {
+        private const val API_KEY_SECURE_KEY = "app_api_key"
+
         lateinit var instance: OctomilApplication
             private set
     }

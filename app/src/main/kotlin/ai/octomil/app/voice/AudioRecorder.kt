@@ -28,10 +28,10 @@ class AudioRecorder {
     private val _durationMs = MutableStateFlow(0L)
     val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
 
-    private var recorder: AudioRecord? = null
-    private var recordingThread: Thread? = null
+    @Volatile private var recorder: AudioRecord? = null
+    @Volatile private var recordingThread: Thread? = null
     private val buffer = ShortArray(MAX_SAMPLES)
-    private var samplesRecorded = 0
+    @Volatile private var samplesRecorded = 0
 
     @SuppressLint("MissingPermission")
     fun startRecording() {
@@ -54,13 +54,22 @@ class AudioRecorder {
             bufferSize,
         )
 
-        recorder?.startRecording()
+        val rec = recorder
+        if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord failed to initialize")
+            rec?.release()
+            recorder = null
+            return
+        }
+
+        rec.startRecording()
         _isRecording.value = true
 
         recordingThread = Thread {
             val readBuf = ShortArray(1024)
             while (_isRecording.value && samplesRecorded < MAX_SAMPLES) {
-                val read = recorder?.read(readBuf, 0, readBuf.size) ?: break
+                val read = rec.read(readBuf, 0, readBuf.size)
+                if (read < 0) break
                 if (read > 0) {
                     val toCopy = minOf(read, MAX_SAMPLES - samplesRecorded)
                     System.arraycopy(readBuf, 0, buffer, samplesRecorded, toCopy)
@@ -85,8 +94,10 @@ class AudioRecorder {
         recordingThread?.join(1000)
         recordingThread = null
 
-        recorder?.stop()
-        recorder?.release()
+        recorder?.let {
+            if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop()
+            it.release()
+        }
         recorder = null
 
         val result = FloatArray(samplesRecorded) { buffer[it] / 32768f }
@@ -125,7 +136,15 @@ class AudioRecorder {
             bufferSize,
         )
 
-        recorder?.startRecording()
+        val rec = recorder
+        if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord failed to initialize")
+            rec?.release()
+            recorder = null
+            return
+        }
+
+        rec.startRecording()
         _isRecording.value = true
 
         val chunkSamples = SAMPLE_RATE / 10 // 100ms = 1600 samples at 16kHz
@@ -133,7 +152,8 @@ class AudioRecorder {
         recordingThread = Thread {
             val readBuf = ShortArray(chunkSamples)
             while (_isRecording.value && samplesRecorded < MAX_SAMPLES) {
-                val read = recorder?.read(readBuf, 0, readBuf.size) ?: break
+                val read = rec.read(readBuf, 0, readBuf.size)
+                if (read < 0) break
                 if (read > 0) {
                     samplesRecorded += read
                     _durationMs.value = (samplesRecorded.toLong() * 1000) / SAMPLE_RATE
@@ -159,8 +179,10 @@ class AudioRecorder {
         recordingThread?.join(1000)
         recordingThread = null
 
-        recorder?.stop()
-        recorder?.release()
+        recorder?.let {
+            if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop()
+            it.release()
+        }
         recorder = null
 
         Log.i(TAG, "Streaming stopped after ${samplesRecorded} samples (${_durationMs.value}ms)")

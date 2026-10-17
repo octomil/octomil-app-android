@@ -23,8 +23,8 @@ private const val TAG = "SpeechService"
 class SpeechService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var session: SpeechSession? = null
-    private var callback: ISpeechCallback? = null
+    @Volatile private var session: SpeechSession? = null
+    @Volatile private var callback: ISpeechCallback? = null
 
     override fun onCreate() {
         super.onCreate()

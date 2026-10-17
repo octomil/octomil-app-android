@@ -15,10 +15,11 @@ android {
         versionName = "1.3.4"
     }
 
+    val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "keystore.jks")
+
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("KEYSTORE_PATH") ?: "keystore.jks"
-            val ksFile = file(keystorePath)
+            val ksFile = releaseKeystore
             if (ksFile.exists()) {
                 storeFile = ksFile
                 storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
@@ -35,7 +36,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = signingConfigs.getByName("release")
+            if (releaseKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         // Optimised debug: R8 shrinking with debug signing — fast for demos
         create("benchmark") {
